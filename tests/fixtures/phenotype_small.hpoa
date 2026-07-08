@@ -1,0 +1,15 @@
+#description: Small HPOA fixture for PRISM unit tests
+#version: test
+database_id	disease_name	qualifier	hpo_id	reference	evidence	onset	frequency	sex	modifier	aspect	biocuration
+OMIM:601869	Deafness, autosomal recessive 15		HP:0000407	OMIM:601869	PCS		HP:0040280			P	HPO:test[2024-01-01]
+OMIM:601869	Deafness, autosomal recessive 15		HP:0000399	OMIM:601869	PCS		HP:0040281			P	HPO:test[2024-01-01]
+OMIM:101600	Pfeiffer syndrome		HP:0001363	OMIM:101600	PCS		HP:0040280			P	HPO:test[2024-01-01]
+OMIM:101600	Pfeiffer syndrome		HP:0011304	OMIM:101600	PCS		HP:0040281			P	HPO:test[2024-01-01]
+OMIM:101600	Pfeiffer syndrome		HP:0000238	OMIM:101600	PCS		HP:0040282			P	HPO:test[2024-01-01]
+OMIM:101600	Pfeiffer syndrome		HP:0000316	OMIM:101600	PCS		HP:0040283			P	HPO:test[2024-01-01]
+OMIM:101600	Pfeiffer syndrome	NOT	HP:0001161	OMIM:101600	PCS					P	HPO:test[2024-01-01]
+OMIM:123500	Crouzon syndrome		HP:0001363	OMIM:123500	PCS		HP:0040280			P	HPO:test[2024-01-01]
+OMIM:123500	Crouzon syndrome		HP:0000316	OMIM:123500	PCS		HP:0040282			P	HPO:test[2024-01-01]
+OMIM:101200	Apert syndrome		HP:0001363	OMIM:101200	PCS		HP:0040280			P	HPO:test[2024-01-01]
+OMIM:101200	Apert syndrome		HP:0001161	OMIM:101200	PCS		HP:0040280			P	HPO:test[2024-01-01]
+OMIM:101200	Apert syndrome		HP:0001249	OMIM:101200	PCS		HP:0040282			P	HPO:test[2024-01-01]

@@ -1,0 +1,86 @@
+format-version: 1.2
+ontology: hp/hp-small-test-fixture
+
+[Term]
+id: HP:0000001
+name: All
+
+[Term]
+id: HP:0000118
+name: Phenotypic abnormality
+is_a: HP:0000001 ! All
+
+[Term]
+id: HP:0003674
+name: Onset
+is_a: HP:0000001 ! All
+
+[Term]
+id: HP:0003577
+name: Congenital onset
+is_a: HP:0003674 ! Onset
+
+[Term]
+id: HP:0000598
+name: Abnormality of the ear
+is_a: HP:0000118 ! Phenotypic abnormality
+
+[Term]
+id: HP:0000407
+name: Sensorineural hearing impairment
+is_a: HP:0000598 ! Abnormality of the ear
+
+[Term]
+id: HP:0000399
+name: Prelingual sensorineural hearing impairment
+is_a: HP:0000407 ! Sensorineural hearing impairment
+
+[Term]
+id: HP:0001363
+name: Craniosynostosis
+is_a: HP:0000118 ! Phenotypic abnormality
+
+[Term]
+id: HP:0040064
+name: Abnormality of limbs
+is_a: HP:0000118 ! Phenotypic abnormality
+
+[Term]
+id: HP:0001155
+name: Abnormality of the hand
+is_a: HP:0040064 ! Abnormality of limbs
+
+[Term]
+id: HP:0001167
+name: Abnormality of finger
+is_a: HP:0001155 ! Abnormality of the hand
+
+[Term]
+id: HP:0011304
+name: Broad thumb
+is_a: HP:0001155 ! Abnormality of the hand
+
+[Term]
+id: HP:0001161
+name: Camptodactyly
+is_a: HP:0001167 ! Abnormality of finger
+
+[Term]
+id: HP:0000478
+name: Abnormality of the eye
+is_a: HP:0000118 ! Phenotypic abnormality
+
+[Term]
+id: HP:0000316
+name: Hypertelorism
+is_a: HP:0000478 ! Abnormality of the eye
+
+[Term]
+id: HP:0000238
+name: Hydrocephalus
+is_a: HP:0000118 ! Phenotypic abnormality
+
+[Term]
+id: HP:0001249
+name: Intellectual disability
+is_a: HP:0000118 ! Phenotypic abnormality

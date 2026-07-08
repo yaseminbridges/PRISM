@@ -1,0 +1,28 @@
+{
+  "id": "Pfeiffer-test-case",
+  "subject": {
+    "id": "proband-pfeiffer",
+    "sex": "FEMALE",
+    "timeAtLastEncounter": {
+      "age": {"iso8601duration": "P1Y"}
+    }
+  },
+  "phenotypicFeatures": [
+    {
+      "type": {"id": "HP:0001363", "label": "Craniosynostosis"},
+      "excluded": false
+    },
+    {
+      "type": {"id": "HP:0011304", "label": "Broad thumb"},
+      "excluded": false
+    },
+    {
+      "type": {"id": "HP:0000238", "label": "Hydrocephalus"},
+      "excluded": false
+    },
+    {
+      "type": {"id": "HP:0001161", "label": "Camptodactyly"},
+      "excluded": true
+    }
+  ]
+}

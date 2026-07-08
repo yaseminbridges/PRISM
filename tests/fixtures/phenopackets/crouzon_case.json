@@ -1,0 +1,20 @@
+{
+  "id": "Crouzon-test-case",
+  "subject": {
+    "id": "proband-crouzon",
+    "sex": "MALE",
+    "timeAtLastEncounter": {
+      "age": {"iso8601duration": "P3Y"}
+    }
+  },
+  "phenotypicFeatures": [
+    {
+      "type": {"id": "HP:0001363", "label": "Craniosynostosis"},
+      "excluded": false
+    },
+    {
+      "type": {"id": "HP:0000316", "label": "Hypertelorism"},
+      "excluded": false
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+# Partition Prompt — stub (Phase 1)

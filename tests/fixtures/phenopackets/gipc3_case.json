@@ -1,0 +1,20 @@
+{
+  "id": "GIPC3-test-case",
+  "subject": {
+    "id": "proband-gipc3",
+    "sex": "MALE",
+    "timeAtLastEncounter": {
+      "age": {"iso8601duration": "P8Y"}
+    }
+  },
+  "phenotypicFeatures": [
+    {
+      "type": {"id": "HP:0000407", "label": "Sensorineural hearing impairment"},
+      "excluded": false
+    },
+    {
+      "type": {"id": "HP:0000399", "label": "Prelingual sensorineural hearing impairment"},
+      "excluded": false
+    }
+  ]
+}

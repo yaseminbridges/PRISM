@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Understanding PRISM</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 15px;
+    line-height: 1.7;
+    color: #1a1a2e;
+    background: #f4f6f9;
+    padding: 2rem 1rem;
+  }
+
+  .page {
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  /* ── Header ── */
+  .header {
+    background: linear-gradient(135deg, #0f3460 0%, #16213e 100%);
+    color: #fff;
+    border-radius: 10px;
+    padding: 2.5rem 2rem;
+    margin-bottom: 2rem;
+  }
+  .header h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.5px; }
+  .header .subtitle {
+    margin-top: 0.4rem;
+    color: #a8c4e0;
+    font-size: 1rem;
+  }
+
+  /* ── Sections ── */
+  section {
+    background: #fff;
+    border-radius: 8px;
+    padding: 1.75rem 2rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  }
+
+  h2 {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #0f3460;
+    margin-bottom: 1rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 2px solid #e8eef7;
+  }
+
+  h3 {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #1565c0;
+    margin: 1.25rem 0 0.4rem;
+  }
+
+  h4 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin: 1rem 0 0.3rem;
+  }
+
+  p { margin-bottom: 0.75rem; }
+  p:last-child { margin-bottom: 0; }
+
+  ul, ol { padding-left: 1.4rem; margin-bottom: 0.75rem; }
+  li { margin-bottom: 0.3rem; }
+  ol li { padding-left: 0.2rem; }
+
+  strong { color: #0f3460; }
+
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.85em;
+    background: #eef2fb;
+    color: #283593;
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  /* ── Pipeline diagram ── */
+  .pipeline-diagram {
+    background: #1a1a2e;
+    color: #e0e8ff;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    padding: 1.25rem 1.5rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 1rem 0;
+  }
+
+  /* ── Fit score formula ── */
+  .formula {
+    background: #f0f4ff;
+    border-left: 4px solid #1565c0;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.84rem;
+    line-height: 1.8;
+    padding: 1rem 1.25rem;
+    border-radius: 0 6px 6px 0;
+    margin: 1rem 0;
+    overflow-x: auto;
+  }
+
+  /* ── Bucket table (C1) ── */
+  .bucket-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.75rem 0 1rem;
+    font-size: 0.9rem;
+  }
+  .bucket-table thead tr { background: #0f3460; color: #fff; }
+  .bucket-table th { padding: 8px 12px; text-align: left; font-weight: 600; }
+  .bucket-table tbody tr:nth-child(even) { background: #f8f9fb; }
+  .bucket-table tbody tr:hover { background: #e8eef7; }
+  .bucket-table td { padding: 7px 12px; border-bottom: 1px solid #e0e0e0; vertical-align: top; }
+  .bucket-table td:first-child { white-space: nowrap; }
+
+  .badge {
+    display: inline-block;
+    border-radius: 3px;
+    padding: 1px 8px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    white-space: nowrap;
+  }
+  .badge-green  { background: #c8e6c9; color: #1b5e20; }
+  .badge-blue   { background: #bbdefb; color: #0d47a1; }
+  .badge-orange { background: #ffe0b2; color: #bf360c; }
+  .badge-red    { background: #ffcdd2; color: #b71c1c; }
+  .badge-purple { background: #e1bee7; color: #4a148c; }
+
+  /* ── Component cards ── */
+  .component-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+  .component-card {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+    background: #fafbfd;
+  }
+  .component-card .label {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #888;
+    background: #f0f0f0;
+    border-radius: 3px;
+    padding: 0 5px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .component-card h4 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #0f3460;
+    margin-bottom: 0.4rem;
+  }
+  .component-card p {
+    font-size: 0.86rem;
+    color: #444;
+    margin: 0;
+  }
+  .component-card code { font-size: 0.78em; }
+  .card-c1 { border-top: 3px solid #1565c0; }
+  .card-c2 { border-top: 3px solid #2e7d32; }
+  .card-c3 { border-top: 3px solid #e65100; }
+  .card-c4 { border-top: 3px solid #6a1b9a; }
+  .card-c5 { border-top: 3px solid #c62828; }
+
+  /* ── LLM role boxes ── */
+  .llm-box {
+    background: #fce4ec;
+    border-left: 4px solid #c2185b;
+    border-radius: 0 6px 6px 0;
+    padding: 0.9rem 1.1rem;
+    margin: 0.75rem 0;
+    font-size: 0.92rem;
+  }
+  .llm-box strong { color: #880e4f; }
+
+  /* ── Data models table ── */
+  .models-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    margin-top: 0.75rem;
+  }
+  .models-table thead tr { background: #0f3460; color: #fff; }
+  .models-table th { padding: 8px 12px; text-align: left; font-weight: 600; }
+  .models-table tbody tr:nth-child(even) { background: #f8f9fb; }
+  .models-table tbody tr:hover { background: #e8eef7; }
+  .models-table td { padding: 7px 12px; border-bottom: 1px solid #e0e0e0; vertical-align: top; }
+
+  /* ── Reading order ── */
+  .reading-list { list-style: none; padding: 0; counter-reset: step; }
+  .reading-list li {
+    counter-increment: step;
+    display: grid;
+    grid-template-columns: 2rem 1fr;
+    gap: 0.5rem;
+    padding: 0.65rem 0;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 0.92rem;
+    align-items: start;
+  }
+  .reading-list li:last-child { border-bottom: none; }
+  .reading-list li::before {
+    content: counter(step);
+    background: #0f3460;
+    color: #fff;
+    border-radius: 50%;
+    width: 1.6rem;
+    height: 1.6rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    flex-shrink: 0;
+    margin-top: 0.1rem;
+  }
+  .reading-list li .file { font-weight: 700; color: #0f3460; display: block; }
+  .reading-list li .desc { color: #555; font-size: 0.88rem; display: block; margin-top: 0.1rem; }
+
+  /* ── Callable rules ── */
+  .rule-box {
+    background: #e8f5e9;
+    border-left: 4px solid #43a047;
+    border-radius: 0 6px 6px 0;
+    padding: 0.9rem 1.1rem;
+    margin: 0.5rem 0;
+    font-size: 0.92rem;
+  }
+  .rule-box.warn {
+    background: #fff8e1;
+    border-color: #ffa000;
+  }
+  .rule-box strong { color: #2e7d32; }
+  .rule-box.warn strong { color: #e65100; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>Understanding PRISM</h1>
+    <p class="subtitle">Phenotype Re-ranking via Interpretable Semantic Matching — architecture, flow, and reading guide</p>
+  </div>
+
+  <!-- What is PRISM -->
+  <section>
+    <h2>What Is PRISM?</h2>
+    <p>
+      PRISM is a post-processing layer that sits on top of <strong>Exomiser</strong>.
+      Exomiser is a clinical genomics tool that takes a patient's HPO phenotype terms and
+      genetic variants and produces a ranked list of candidate gene/disease pairs.
+      PRISM takes that ranked list and re-ranks it using richer phenotype reasoning —
+      matching the patient's symptoms against curated disease profiles, weighing how
+      specific and informative each match is, and optionally asking an LLM to resolve
+      ambiguous cases.
+    </p>
+  </section>
+
+  <!-- Inputs and Outputs -->
+  <section>
+    <h2>Inputs and Outputs</h2>
+    <h3>Inputs (per patient case)</h3>
+    <ul>
+      <li><strong>Phenopacket (JSON)</strong> — describes the patient: observed HPO terms,
+        explicitly excluded HPO terms, sex, and age.</li>
+      <li><strong>Exomiser parquet file</strong> — Exomiser's ranked gene/disease candidates,
+        each with a combined score, phenotype score, variant score, and contributing variants.</li>
+    </ul>
+    <h3>Output: <code>RankedReport</code></h3>
+    <ul>
+      <li><code>reranked</code> — all candidates re-ordered with PRISM fit scores</li>
+      <li><code>callable_diagnoses</code> — ≤2 high-confidence diagnosis calls (empty is valid)</li>
+      <li><code>disambiguation</code> — if two diseases looked similar, which one fits better and why</li>
+      <li><code>narratives</code> — LLM-generated plain-English summaries for the top candidates</li>
+    </ul>
+  </section>
+
+  <!-- Pipeline -->
+  <section>
+    <h2>The End-to-End Pipeline</h2>
+
+    <div class="pipeline-diagram">phenopacket.json  ──┐
+                    ├──► [Ingest] ──► [Partition] ──► [Age Gate] ──►
+exomiser.parquet  ──┘                                               │
+                                                                    ▼
+                    ┌──────────────── [Rescore &amp; Rerank] ◄─────────┘
+                    │
+                    ▼
+              [Mechanism] ──► [Disambiguate] ──► [Callable call] ──► RankedReport</div>
+
+    <div class="rule-box warn" style="margin:.75rem 0 0">
+      <strong>A note on "C1", "C2" etc.</strong> — you will see these labels in the source
+      code comments and file docstrings. They are just internal shorthand: <strong>C stands
+      for Component</strong>, and the numbers are the order in which the components were
+      designed, <em>not</em> the order they run</strong>. The actual execution order is
+      Partition → Age Gate → Rescore → Mechanism → Disambiguate
+      (i.e. C1 → C3 → C2 → C5 → C4). The descriptive names are what matter.
+    </div>
+
+    <h3>Step 0 — Ingest</h3>
+    <ul>
+      <li><code>ingest/phenopacket_loader.py</code> parses the phenopacket JSON into a <code>PatientPhenotype</code>.</li>
+      <li><code>ingest/exomiser_loader.py</code> reads the Exomiser parquet into a list of <code>ExomiserCandidate</code>.</li>
+      <li>The top N candidates (default 20) are kept.</li>
+    </ul>
+
+    <h3>Step 1 — Knowledge Loading</h3>
+    <ul>
+      <li>The HPO ontology (<code>hp.obo</code>) is loaded into <code>HPOGraph</code>, which supports
+        ancestor/descendant lookups and computes <strong>information content (IC)</strong> per term
+        (how rare/specific a term is).</li>
+      <li><code>HpoaRetriever</code> loads <code>phenotype.hpoa</code> — the HPO Annotation database
+        linking diseases to their HPO features with frequency information.</li>
+      <li><code>OrphanetRetriever</code> (optional) loads Orphanet XML for supplementary phenotype
+        profiles, especially for ORPHA-prefixed disease IDs.</li>
+    </ul>
+
+    <div class="component-grid">
+
+      <div class="component-card card-c1">
+        <h4>Partition <span class="label">C1</span></h4>
+        <p>Compares each patient HPO term against the disease profile. Sorts terms into matched /
+          partial / unexplained / expected_absent / contradictions. LLM called for broader-term cases.
+          <br><code>components/partition.py</code></p>
+      </div>
+
+      <div class="component-card card-c3">
+        <h4>Age Gate <span class="label">C3</span></h4>
+        <p>Excuses expected_absent features when the disease onset is later than the patient's
+          current age — removes the Rescore penalty for developmentally premature absences.
+          <br><code>components/age_gate.py</code></p>
+      </div>
+
+      <div class="component-card card-c2">
+        <h4>Rescore &amp; Rerank <span class="label">C2</span></h4>
+        <p>Computes <code>fit_score = tanh(weighted sum)</code> from FitEvidence. Re-ranks candidates
+          using conservative (default) or aggressive mode. Pure arithmetic — no LLM.
+          <br><code>components/rescore.py</code></p>
+      </div>
+
+      <div class="component-card card-c5">
+        <h4>Mechanism Congruence <span class="label">C5</span></h4>
+        <p>Checks whether variant evidence (ACMG class, MOI, allele count) supports the disease.
+          Returns congruent / incongruent / uncertain. Incongruent blocks a callable diagnosis.
+          <br><code>components/mechanism.py</code></p>
+      </div>
+
+      <div class="component-card card-c4">
+        <h4>Disambiguate <span class="label">C4</span></h4>
+        <p>Triggered when ≥2 top candidates have overlapping profiles (Jaccard ≥ 0.3). Finds
+          discriminating features and uses the LLM for ones the patient is silent on.
+          <br><code>components/disambiguate.py</code></p>
+      </div>
+
+    </div>
+
+    <h3>Partition — What Happens to Each Patient Term</h3>
+    <table class="bucket-table">
+      <thead>
+        <tr><th>Bucket</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="badge badge-green">matched</span></td>
+          <td>Exact HPO ID match, or patient has a more specific term (descendant of disease feature)</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-blue">partial</span></td>
+          <td>Patient has a broader term than the disease expects — LLM decides if it counts</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-purple">unexplained</span></td>
+          <td>Patient term has no ontological relationship to any disease feature — penalised in Rescore</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">expected_absent</span></td>
+          <td>Disease feature the patient explicitly does NOT have — penalised in Rescore, unless excused by Age Gate</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-red">contradictions</span></td>
+          <td>Disease says a feature should be absent — patient has it — strong penalty in Rescore</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Rescore — How the Score Is Built Up</h3>
+    <p>For each candidate disease, PRISM adds and subtracts points based on how well the
+    patient's symptoms match. Each contribution is scaled by two things multiplied together:
+    <strong>how common this feature is in the disease</strong> (Obligate = 1.0 → VeryRare = 0.05)
+    and <strong>how diagnostically specific the HPO term is</strong> (rare terms that appear in
+    very few diseases score higher than generic terms that appear in thousands).
+    </p>
+    <table class="bucket-table">
+      <thead><tr><th>What happened to the term</th><th>Effect</th><th>Multiplier</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="badge badge-green">Matched</span> — patient has this disease feature</td>
+          <td style="color:#2e7d32;font-weight:700">Add</td>
+          <td>full credit (×1.0) × how common × how specific</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-blue">Partial</span> — LLM said the patient's broader term counts</td>
+          <td style="color:#1565c0;font-weight:700">Add</td>
+          <td>half credit (×0.5) × how common × how specific</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">Expected absent</span> — patient explicitly lacks a disease feature</td>
+          <td style="color:#e65100;font-weight:700">Subtract</td>
+          <td>half penalty (×0.5) × how common × how specific</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-purple">Unexplained</span> — patient has a symptom the disease doesn't explain</td>
+          <td style="color:#6a1b9a;font-weight:700">Subtract</td>
+          <td>light penalty (×0.3) × how specific the patient's term is</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-red">Contradiction</span> — disease says absent, patient has it</td>
+          <td style="color:#b71c1c;font-weight:700">Subtract</td>
+          <td>fixed penalty (×1.0) — no scaling, always the same</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>The running total is then <strong>squeezed into a score between −1 and +1</strong>
+    using a compression function (tanh). Above zero = net evidence for the disease;
+    below zero = net evidence against; zero = balanced.</p>
+    <p>Re-ranking modes:</p>
+    <ul>
+      <li><strong>Conservative</strong> (default) — only swap candidates when their Exomiser
+        scores are nearly tied (within 0.05) AND PRISM's score differs by more than 0.1.</li>
+      <li><strong>Aggressive</strong> — blend Exomiser score (70%) and PRISM score (30%)
+        to produce a new overall ranking.</li>
+    </ul>
+
+    <h3>Callable Diagnosis Rules</h3>
+    <div class="rule-box">
+      <strong>If Disambiguate ran:</strong> the best-supported candidate must have
+      <code>fit_score &gt; 0.5</code> and mechanism ≠ incongruent.
+    </div>
+    <div class="rule-box">
+      <strong>If Disambiguate did not run</strong> (no overlapping candidates): the top
+      candidate must have <code>fit_score &gt; 0.6</code>, lead the runner-up by &gt; 0.15,
+      and mechanism ≠ incongruent.
+    </div>
+    <div class="rule-box warn">
+      <strong>Empty callable_diagnoses is valid</strong> — and preferred over a low-confidence call.
+      A missed diagnosis is less harmful than a confident wrong one.
+    </div>
+  </section>
+
+  <!-- Fit Score In Depth -->
+  <section>
+    <h2>The Fit Score — In Depth</h2>
+    <p>
+      This section walks through every component of the formula, why it was designed that
+      way, and how the numbers interact. The goal is that after reading this you could
+      re-implement it from scratch.
+    </p>
+
+    <h3>The Two Scaling Factors</h3>
+    <p>
+      Every contribution to the score is scaled by two numbers multiplied together. Getting
+      these two ideas clear first makes the rest of the score obvious.
+    </p>
+
+    <h4 style="margin:1rem 0 .3rem; color:#333;">1. How diagnostically specific is this HPO term?</h4>
+    <p>
+      Some HPO terms appear in thousands of diseases — "Fatigue", "Abnormality of the nervous
+      system". Matching one of these tells you almost nothing: almost every disease causes them.
+      Others appear in only 3 or 4 diseases — a very precise dysmorphology, or a distinctive
+      pattern of organ involvement. Matching one of <em>those</em> is extremely informative.
+    </p>
+    <p>
+      PRISM computes a <strong>specificity score</strong> for every HPO term based on how many
+      diseases it is annotated to across the full database (HPOA). The fewer diseases a term is
+      linked to, the higher its specificity score (roughly 0–10+). General terms near the top of
+      the HPO tree pick up hundreds of diseases and have low specificity; precise terms deep in
+      the tree that only a handful of diseases share have high specificity.
+    </p>
+    <div class="formula">specificity score = −log₂( diseases annotated with this term ÷ total diseases )</div>
+    <p style="font-size:0.85em;color:#666;margin-top:.3rem">
+      <em>(Technically called Information Content or IC — you'll see that name in the code.)</em>
+    </p>
+
+    <h4 style="margin:1rem 0 .3rem; color:#333;">2. How common is this feature in the disease?</h4>
+    <p>
+      The specificity score tells you how rare a term is across all diseases globally.
+      The frequency multiplier tells you how expected the feature is <em>for this specific disease</em>:
+      is it present in every patient, or only occasionally?
+    </p>
+    <table class="bucket-table" style="margin:.5rem 0 1rem">
+      <thead><tr><th>Frequency class</th><th>How often seen in this disease</th><th>Multiplier</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td><span class="badge badge-green">Obligate</span></td><td>100% of patients</td><td><code>1.0</code></td><td>Always present — a match is expected, absence is a red flag</td></tr>
+        <tr><td><span class="badge badge-green">VeryFrequent</span></td><td>80–99%</td><td><code>0.9</code></td><td>Almost always present</td></tr>
+        <tr><td><span class="badge badge-blue">Frequent</span></td><td>30–79%</td><td><code>0.5</code></td><td>Present in many but not all patients</td></tr>
+        <tr><td><span class="badge badge-orange">Occasional</span></td><td>5–29%</td><td><code>0.2</code></td><td>Seen in a minority — matching weakly supports, absence barely penalises</td></tr>
+        <tr><td><span class="badge badge-purple">VeryRare</span></td><td>1–4%</td><td><code>0.05</code></td><td>Rarely seen — almost irrelevant to the score either way</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Multiplying these two numbers together gives a single value per feature that captures
+      both dimensions at once. An <strong>Obligate feature with high specificity</strong>
+      is the strongest possible positive signal. A <strong>VeryRare feature with low
+      specificity</strong> barely moves the score in either direction.
+    </p>
+
+    <h3>Every Contribution to the Score, Explained</h3>
+
+    <h4 style="margin:1rem 0 .3rem; color:#2e7d32;">+ Matched features — full credit (×1.0)</h4>
+    <p>
+      A patient term that exactly matches a disease feature (same HPO ID), or where the
+      patient has a more specific version of what the disease lists — e.g. the disease expects
+      "Seizure" and the patient has "Focal seizure". This is the primary positive signal.
+      Full credit because we're confident the patient's symptom accounts for this disease feature.
+    </p>
+    <p>The credit is then scaled by:
+      <strong>how common this feature is in the disease</strong> (Obligate × 1.0, VeryRare × 0.05)
+      <em>and</em> <strong>how diagnostically specific the HPO term is</strong> (rare terms score
+      higher than general ones). So matching "Broad thumb" — a rare, specific finding seen in
+      very few diseases — adds much more than matching "Fatigue".
+    </p>
+
+    <h4 style="margin:1rem 0 .3rem; color:#1565c0;">+ Partial matches — half credit (×0.5)</h4>
+    <p>
+      The patient has a <em>broader</em> term than the disease expects, and the LLM judged it
+      clinically related — e.g. disease expects "Focal seizure", patient has "Seizure".
+      Half credit because the match is uncertain: the patient's seizures might or might not be
+      the focal type the disease specifically involves. Scaled by the same frequency and
+      specificity factors as a full match.
+    </p>
+
+    <h4 style="margin:1rem 0 .3rem; color:#e65100;">− Expected-absent features — half penalty (×0.5)</h4>
+    <p>
+      A disease feature the patient <em>explicitly</em> does not have — the phenopacket records
+      it as excluded by the clinician. Important: a feature simply not mentioned is
+      <em>not</em> penalised. Clinical records are incomplete; not mentioning something
+      just means it wasn't assessed. Only a deliberate "this was checked and not found" counts.
+    </p>
+    <p>The penalty scales with how expected the feature is:</p>
+    <ul>
+      <li>An <strong>Obligate</strong> feature (100% of patients should have it) that the patient
+        lacks is a heavy penalty — this is a hallmark symptom that is simply absent.</li>
+      <li>A <strong>VeryRare</strong> feature (1–4%) the patient lacks barely matters — it's
+        unusual to have it anyway, so its absence is unsurprising.</li>
+    </ul>
+    <p>
+      The penalty is half the weight of a match (×0.5 vs ×1.0) because absence is generally
+      weaker evidence than presence — clinicians are more likely to record what they observed
+      than to systematically check and exclude every possible symptom. Features removed by the
+      Age Gate (disease onset is still in the patient's future) are not penalised here.
+    </p>
+
+    <h4 style="margin:1rem 0 .3rem; color:#6a1b9a;">− Unexplained patient terms — light penalty (×0.3)</h4>
+    <p>
+      The patient has a symptom the disease profile does not account for at all — no feature
+      in the disease profile is even indirectly related to it. The penalty is proportional to
+      <strong>how specific the patient's term is</strong>:
+    </p>
+    <ul>
+      <li>A rare, highly specific unexplained symptom is more suspicious — if this were truly
+        the disease, why does the patient have something so unusual that the disease never shows?</li>
+      <li>A common, general symptom (e.g. "Fatigue") being unexplained barely penalises —
+        general symptoms appear across thousands of diseases and annotations are never complete.</li>
+    </ul>
+    <p>
+      The lightest weight (×0.3) because annotation gaps are common — a feature might simply
+      not yet be documented in HPOA for this disease even if it genuinely occurs.
+    </p>
+
+    <h4 style="margin:1rem 0 .3rem; color:#b71c1c;">− Contradictions — fixed penalty (×1.0, no scaling)</h4>
+    <p>
+      The disease's curated profile explicitly records that a feature is <em>not</em> present
+      in this disease (marked as excluded by clinicians in HPOA). The patient has that feature.
+      This is qualitatively different from just being unexpected — it is an active, documented
+      contradiction.
+    </p>
+    <p>
+      The penalty is <strong>fixed at −1.0 per contradiction regardless of how common or
+      specific the feature is</strong>. The rationale: any genuine contradiction is a serious
+      red flag, and we do not want a low-specificity term to let the contradiction be dismissed
+      as unimportant.
+    </p>
+
+    <h3>Why the running total is compressed to a score between −1 and +1</h3>
+    <p>
+      The raw running total is unbounded — a case with many strong matches could reach +20,
+      one with many penalties could reach −10. That raw number is hard to interpret and hard
+      to set thresholds on. So PRISM passes it through a compression function (mathematically,
+      tanh) that maps any number into the range −1 to +1:
+    </p>
+    <ul>
+      <li><strong>Above 0</strong> = net evidence for this disease</li>
+      <li><strong>Below 0</strong> = net evidence against</li>
+      <li><strong>Near 0</strong> = balanced, uncertain</li>
+      <li><strong>Near +1 or −1</strong> = very strongly for or against</li>
+    </ul>
+    <p>
+      A useful property of this compression is <strong>diminishing returns</strong>: adding
+      a 15th matching feature moves the score much less than adding the first one. This is
+      clinically sensible — once you have strong evidence, more of the same adds little.
+    </p>
+    <p>
+      One edge case: if every candidate has many unexplained symptoms driving all their raw
+      totals very negative, the compression can push them all close to −1 and lose the
+      differences between them. Aggressive reranking mode handles this by working with
+      the uncompressed totals when blending Exomiser and PRISM scores.
+    </p>
+
+    <h3>Worked Example</h3>
+    <p>
+      Patient: age 5, observed Craniosynostosis (IC 5.2) and Hydrocephalus (IC 4.3) and
+      Seizures (IC 6.0). <em>Explicitly excluded</em> Broad thumb (IC 8.1).
+      Candidate disease: <strong>Pfeiffer syndrome</strong>, positive features
+      Craniosynostosis (Obligate) and Broad thumb (Frequent).
+    </p>
+
+    <table class="bucket-table">
+      <thead><tr><th>What happened</th><th>Term</th><th>How common in disease</th><th>Specificity</th><th>Calculation</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="badge badge-green">matched</span></td>
+          <td>Craniosynostosis</td><td>Obligate → ×1.0</td><td>5.2</td>
+          <td>full credit × 1.0 × 5.2 = <strong>+5.20</strong></td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-orange">expected absent</span></td>
+          <td>Broad thumb</td><td>Frequent → ×0.5</td><td>8.1</td>
+          <td>half penalty × 0.5 × 8.1 = <strong>−2.03</strong></td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-purple">unexplained</span></td>
+          <td>Hydrocephalus</td><td>— (no disease feature)</td><td>4.3</td>
+          <td>light penalty × 4.3 = <strong>−1.29</strong></td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-purple">unexplained</span></td>
+          <td>Seizures</td><td>— (no disease feature)</td><td>6.0</td>
+          <td>light penalty × 6.0 = <strong>−1.80</strong></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="formula">Running total = 5.20 − 2.03 − 1.29 − 1.80 = <strong>+0.08</strong>
+Final score  = compress(+0.08) = <strong>+0.08</strong>   ← barely positive</div>
+
+    <p>
+      A score of +0.08 is barely positive — near-neutral. The one strong match
+      (Obligate craniosynostosis) is almost entirely cancelled out by the explicitly absent
+      Frequent feature (broad thumb) and two unexplained symptoms.
+      PRISM is essentially saying: <em>"the evidence for and against Pfeiffer is roughly
+      balanced — I would not call this confidently."</em> This is the correct clinical
+      intuition: a patient with craniosynostosis but <em>no</em> broad thumbs and
+      unexplained seizures is not a typical Pfeiffer presentation.
+    </p>
+    <p>
+      If the patient <em>also</em> had broad thumb (turning the expected-absent penalty into
+      another matched contribution instead), the running total jumps to roughly
+      +5.2 + 4.05 − 1.29 − 1.80 = +6.16, compressed score ≈ 0.999 — an extremely strong call.
+    </p>
+
+    <h3>Conservative vs Aggressive Re-ranking</h3>
+    <p>
+      Exomiser's combined score already integrates phenotype and variant evidence through
+      a model trained across many diseases. PRISM's fit_score adds a different signal —
+      richer phenotype matching — but it should not simply override Exomiser.
+    </p>
+    <div class="rule-box">
+      <strong>Conservative mode (default)</strong> — PRISM only intervenes when Exomiser
+      is genuinely uncertain. Two conditions must both hold:
+      <ul style="margin-top:.4rem">
+        <li>The two candidates' Exomiser combined_scores differ by ≤ 0.05 (a near-tie)</li>
+        <li>PRISM's fit_scores differ by &gt; 0.1 (PRISM clearly prefers one)</li>
+      </ul>
+      If Exomiser is confident (large score gap), its ranking stands regardless of what
+      PRISM's fit_score says.
+    </div>
+    <div class="rule-box warn" style="margin-top:.75rem">
+      <strong>Aggressive mode</strong> — blends both scores for every candidate:
+      <code>key = 0.7 × exo_norm + 0.3 × fit_norm</code>. PRISM influences every
+      ranking decision, not just tiebreaks. Requires more trust in the fit_score.
+      Uses normalised <code>fit_raw</code> (not tanh-saturated fit_score) to preserve
+      discrimination when all candidates have negative raw scores.
+    </div>
+  </section>
+
+  <!-- LLM Role -->
+  <section>
+    <h2>The LLM's Role</h2>
+    <p>The LLM is used in <strong>two places only</strong>, and never directly emits a number
+    that affects scoring. All arithmetic is deterministic in Rescore.</p>
+
+    <div class="llm-box">
+      <strong>Partition — Partial match resolution</strong><br>
+      When the patient has a broader HPO term than the disease expects (e.g. patient has
+      "Seizure" but disease expects "Focal seizure"), the LLM labels the pair as
+      <code>matched</code> / <code>partial</code> / <code>absent_expected</code> /
+      <code>unexplained</code> / <code>contradiction</code>.
+      Only <code>matched</code> or <code>partial</code> earns a positive contribution in Rescore.
+    </div>
+
+    <div class="llm-box">
+      <strong>Disambiguate — Silent discriminator inference</strong><br>
+      When two similar diseases both lack a patient signal on a discriminating feature
+      (the patient is silent — neither observed nor excluded), the LLM is asked whether
+      that feature is likely present or absent.
+      <code>matched</code>/<code>partial</code> → +1 to that disease's score.
+      <code>absent_expected</code>/<code>contradiction</code> → −1.
+      <code>unexplained</code> → neutral.
+    </div>
+
+    <p>
+      <strong>Mock vs real LLM:</strong> The default backend (<code>--llm mock</code>) is
+      deterministic and requires no model — it always labels non-exact pairs as
+      <code>partial</code>. Use <code>--llm ollama --llm-model qwen2.5:7b</code> (or any
+      pulled model) to run with a real local model via Ollama.
+    </p>
+  </section>
+
+  <!-- Data Models -->
+  <section>
+    <h2>Key Data Models</h2>
+    <table class="models-table">
+      <thead>
+        <tr><th>Model</th><th>File</th><th>Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>HpoTerm</code></td><td><code>models/phenopacket.py</code></td><td>A single HPO term (observed or excluded)</td></tr>
+        <tr><td><code>PatientPhenotype</code></td><td><code>models/phenopacket.py</code></td><td>Full patient description — the main input to the pipeline</td></tr>
+        <tr><td><code>ExomiserCandidate</code></td><td><code>models/exomiser.py</code></td><td>One gene/disease candidate from Exomiser with scores and variants</td></tr>
+        <tr><td><code>Variant</code></td><td><code>models/exomiser.py</code></td><td>A contributing genetic variant for a candidate</td></tr>
+        <tr><td><code>DiseaseFeature</code></td><td><code>models/candidate.py</code></td><td>One annotated HPO feature from a disease profile, with frequency and IC</td></tr>
+        <tr><td><code>FeatureMatch</code></td><td><code>models/candidate.py</code></td><td>A patient term paired with a disease feature (exact / subsumed / partial)</td></tr>
+        <tr><td><code>FitEvidence</code></td><td><code>models/candidate.py</code></td><td>All match buckets for one candidate — produced by Partition, scored by Rescore</td></tr>
+        <tr><td><code>DiseaseProfile</code></td><td><code>knowledge/hpoa/tool.py</code></td><td>Curated phenotype profile for a disease (features + excluded features)</td></tr>
+        <tr><td><code>MechanismVerdict</code></td><td><code>models/report.py</code></td><td>Mechanism Congruence output: congruent / incongruent / uncertain</td></tr>
+        <tr><td><code>ReRankedCandidate</code></td><td><code>models/report.py</code></td><td>A candidate with new rank, fit score, rationale, and mechanism verdict</td></tr>
+        <tr><td><code>DisambiguationReport</code></td><td><code>models/report.py</code></td><td>Disambiguate output: which overlapping disease is best supported and why</td></tr>
+        <tr><td><code>RankedReport</code></td><td><code>models/report.py</code></td><td>The final output for one patient case — the top-level pipeline return value</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Reading Order -->
+  <section>
+    <h2>Files Reading Order</h2>
+    <p>Read the files in this order to build up understanding from the ground up.</p>
+    <ol class="reading-list">
+      <li>
+        <div>
+          <span class="file">models/phenopacket.py</span>
+          <span class="desc">Start here. The shape of the patient input: HPO terms (observed vs explicitly
+          excluded), sex, and age. The absence/excluded distinction is critical — a term not mentioned
+          is "not assessed", not "absent".</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">models/exomiser.py</span>
+          <span class="desc">The shape of what Exomiser produces: one candidate per gene/disease/MOI
+          combination, with variant evidence and combined scores.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">models/candidate.py</span>
+          <span class="desc">The core intermediate data structure. <code>FitEvidence</code> is what
+          Partition produces and what Rescore scores. <code>DiseaseFeature</code> is one annotated
+          HPO feature from a disease profile.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">models/report.py</span>
+          <span class="desc">The output structures: <code>ReRankedCandidate</code>, <code>RankedReport</code>,
+          <code>DisambiguationReport</code>, <code>MechanismVerdict</code>.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">ontology/frequency.py</span>
+          <span class="desc">How disease feature frequency classes (Obligate, Frequent, etc.) map to
+          numeric weights. Obligate features matter much more than occasional ones in Rescore.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">ontology/hpo.py</span>
+          <span class="desc">The HPO ontology graph. Supports ancestor/descendant lookups (used in
+          Partition for subsumed/partial matching) and computes Resnik information content per term.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">ingest/phenopacket_loader.py</span>
+          <span class="desc">Parses a GA4GH phenopacket JSON file into a <code>PatientPhenotype</code>.
+          Also handles Family phenopackets (extracts the proband).</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">ingest/exomiser_loader.py</span>
+          <span class="desc">Reads the Exomiser parquet. Aggregates gene-level scores and contributing
+          variants, then picks the right disease per candidate based on mode-of-inheritance matching.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">knowledge/hpoa/tool.py</span>
+          <span class="desc">Loads the HPO Annotation database (<code>phenotype.hpoa</code>) into memory.
+          For any disease ID (OMIM or ORPHA), returns annotated HPO features with frequency and IC.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">knowledge/orphanet/tool.py</span>
+          <span class="desc">Supplements HPOA with Orphanet disease profiles from XML. HPOA is primary;
+          Orphanet fills gaps. Especially useful for ORPHA-prefixed disease IDs.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">reasoning/llm.py</span>
+          <span class="desc">The LLM abstraction layer. Defines <code>LLMClient</code> (abstract),
+          <code>MockLLMClient</code> (deterministic, for testing), and <code>OllamaLLMClient</code>
+          (real model via local Ollama). All LLM calls go through <code>resolve_match</code> /
+          <code>synthesise_narrative</code>.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">components/partition.py</span>
+          <span class="desc"><strong>Partition</strong> (internal code: C1). Reads patient terms and a disease
+          profile, produces <code>FitEvidence</code>. Matching priority: exact → subsumed → LLM partial.
+          Only the broader-term case calls the LLM.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">components/age_gate.py</span>
+          <span class="desc"><strong>Age Gate</strong> (internal code: C3). Simple post-processing: moves
+          <code>expected_absent</code> features to <code>age_excused</code> when the disease onset
+          is later than the patient's age.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">components/rescore.py</span>
+          <span class="desc"><strong>Rescore</strong> (internal code: C2). The fit score formula and
+          re-ranking logic. The mathematical core of PRISM. No LLM — pure arithmetic on
+          <code>FitEvidence</code>.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">components/mechanism.py</span>
+          <span class="desc"><strong>Mechanism Congruence</strong> (internal code: C5). Checks variant
+          pathogenicity class and mode-of-inheritance consistency. Fully deterministic, no LLM.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">components/disambiguate.py</span>
+          <span class="desc"><strong>Disambiguate</strong> (internal code: C4). The most complex component.
+          Finds overlapping candidate pairs, computes discriminating features, scores them against
+          the patient, and uses the LLM for features the patient is silent on.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">pipeline.py</span>
+          <span class="desc">The top-level orchestrator for a single case. Loads knowledge bases,
+          runs Partition → Age Gate → Rescore → Mechanism → Disambiguate, decides on callable
+          diagnoses, generates narratives.
+          <strong>Best file to read to see how all components connect.</strong></span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">reasoning/agent.py</span>
+          <span class="desc">Stateful wrapper around <code>pipeline.py</code>. Loads knowledge bases
+          once and reuses them across many cases. Use for batch evaluation (e.g. PhEval) to avoid
+          reloading HPO and HPOA thousands of times.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">cli.py</span>
+          <span class="desc">The command-line interface. Three subcommands: <code>run</code> (single
+          case), <code>batch</code> (directory, with <code>--skip-existing</code> for retrying
+          failures), and <code>pheval-gene-result</code> (export to PhEval format).</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <span class="file">pheval_export.py</span>
+          <span class="desc">Converts PRISM JSON report files into PhEval gene result parquet files
+          for standardised benchmarking against other tools.</span>
+        </div>
+      </li>
+    </ol>
+  </section>
+
+</div>
+</body>
+</html>
