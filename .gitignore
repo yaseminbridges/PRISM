@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Top-level data/ directory (working copies — bundled data lives in src/prism/data/)
+/data/
+
+# Results output
+results/
+results_*/
+result/
+result_*/
+test/
+
+# IDE
+.idea/
+.vscode/
+*.DS_Store
+
+# Test cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+uv.lock
