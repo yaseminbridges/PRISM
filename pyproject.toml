@@ -1,6 +1,6 @@
 [project]
 name = "rephive"
-version = "0.1.0"
+version = "0.1.1"
 description = "PRISM — Phenotype Re-ranking via Interpretable Semantic Matching, a post-processing layer for Exomiser"
 readme = "README.md"
 license = { file = "LICENSE" }
