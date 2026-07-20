@@ -37,8 +37,8 @@ def _patient(*term_ids: str, excluded: tuple[str, ...] = ()) -> PatientPhenotype
     )
 
 
-def _feat(hpo_id: str, label: str, freq: str = "Frequent") -> DiseaseFeature:
-    return DiseaseFeature(hpo_id=hpo_id, hpo_label=label, frequency_class=freq, ic=1.0, source="HPOA")
+def _feat(hpo_id: str, label: str, freq: str = "Frequent", ic: float = 1.0) -> DiseaseFeature:
+    return DiseaseFeature(hpo_id=hpo_id, hpo_label=label, frequency_class=freq, ic=ic, source="HPOA")
 
 
 def _profile(disease_id: str, features, excluded_features=None) -> DiseaseProfile:

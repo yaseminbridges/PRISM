@@ -28,7 +28,7 @@ from pathlib import Path
 from pheval.post_processing.post_processing import SortOrder
 
 from prism.pheval_export import IDENTIFIER_TYPES, export_pheval_gene_results
-from prism._paths import HPO_OBO, HPOA
+from prism._paths import HPO_OBO, HPOA, ORPHANET_P4, ORPHANET_AGES, ORPHANET_XREF
 from prism.pipeline import PRISMConfig, PRISMResources, run, run_with_resources
 from prism.reasoning.llm import LLMClient, MockLLMClient
 
@@ -110,6 +110,23 @@ def _summary(report) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
+
+def _filter_best_per_gene(report):
+    """Return a copy of report keeping only the top-ranked candidate per gene symbol."""
+    seen: set[str] = set()
+    kept = []
+    for rc in report.reranked:  # already sorted by new_rank ascending
+        gene = rc.candidate.gene_symbol or ""
+        if gene not in seen:
+            seen.add(gene)
+            kept.append(rc)
+    reranked = [rc.model_copy(update={"new_rank": i + 1}) for i, rc in enumerate(kept)]
+    return report.model_copy(update={"reranked": reranked})
 
 
 # ---------------------------------------------------------------------------
@@ -314,14 +331,14 @@ def _feature_detail(rc, narratives: dict) -> str:
         for fm in fit.partial:
             rows.append(
                 f'<span class="tag tag-llm">LLM</span> '
-                f'{_e(fm.patient_term.label)} &#8776; {_e(fm.disease_feature.hpo_label)}'
+                f'{_e(fm.patient_term.label or fm.patient_term.id)} &#8776; {_e(fm.disease_feature.hpo_label)}'
                 f'<br><span style="font-size:.75rem;color:#555">{_e(fm.provenance[:120])}</span>'
             )
         parts.append(f'<div class="feat-label">LLM partial</div><div class="feat-val">{"<br>".join(rows)}</div>')
 
     if fit.unexplained:
         tags = "".join(
-            f'<span class="tag tag-unexp">{_e(t.label)}</span>'
+            f'<span class="tag tag-unexp">{_e(t.label or t.id)}</span>'
             for t in fit.unexplained
         )
         parts.append(f'<div class="feat-label">Unexplained</div><div class="feat-val">{tags}</div>')
@@ -419,7 +436,7 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
         "--narrative-top-n", type=int, default=3,
         help="Generate LLM narrative for this many top candidates (default: 3)",
     )
-    p.add_argument("--mode", choices=["conservative", "aggressive"], default="conservative")
+    p.add_argument("--mode", choices=["prism", "blended"], default="blended")
     p.add_argument("--llm", choices=["mock", "ollama"], default="mock")
     p.add_argument("--llm-model", default="qwen2.5:7b")
     p.add_argument("--llm-url", default="http://localhost:11434")
@@ -434,6 +451,8 @@ def _cmd_run(args) -> None:
     llm = _build_llm(args)
     config = _build_config(args)
     report = run(args.phenopacket, args.exomiser, config=config, llm=llm)
+    if getattr(args, "best_per_gene", False):
+        report = _filter_best_per_gene(report)
 
     if args.format == "summary":
         output = _summary(report)
@@ -511,6 +530,14 @@ def _cmd_batch(args) -> None:
             failed += 1
             continue
 
+        if not report.reranked:
+            print(f"  [warn]  {pp.name}  — no Exomiser candidates, skipping", file=sys.stderr)
+            skipped += 1
+            continue
+
+        if args.best_per_gene:
+            report = _filter_best_per_gene(report)
+
         html_path = raw_dir / f"{stem}.html"
         json_path = raw_dir / f"{stem}.json"
         html_path.write_text(_html_report(report))
@@ -530,7 +557,7 @@ def _cmd_batch(args) -> None:
     if failed:
         sys.exit(1)
 
-    if ok > 0:
+    if any(raw_dir.glob("*.json")):
         print("\n[PRISM] Running PhEval post-processing...", file=sys.stderr)
         sort_order = SortOrder.DESCENDING if args.sort_order == "descending" else SortOrder.ASCENDING
         export_pheval_gene_results(
@@ -542,6 +569,22 @@ def _cmd_batch(args) -> None:
             sort_order=sort_order,
         )
         print(f"[PRISM] PhEval results written to {output_dir / 'pheval_gene_results'}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# 'build-db' subcommand — build SCOPE H2 SQL tables
+# ---------------------------------------------------------------------------
+
+def _cmd_build_db(args) -> None:
+    from prism.build_scope_db import build
+    build(
+        output=args.output,
+        hpo_path=args.hpo,
+        hpoa_path=args.hpoa,
+        product4_path=args.product4 or ORPHANET_P4,
+        ages_path=args.ages or ORPHANET_AGES,
+        product1_path=args.product1 or ORPHANET_XREF,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -581,6 +624,10 @@ def main() -> None:
         "--format", choices=["json", "summary", "html"], default="json",
         help="Output format (default: json)",
     )
+    run_p.add_argument(
+        "--best-per-gene", action="store_true",
+        help="Keep only the best-scoring disease per gene in the output",
+    )
     _add_common_args(run_p)
     run_p.set_defaults(func=_cmd_run)
 
@@ -605,6 +652,10 @@ def main() -> None:
     batch_p.add_argument(
         "--skip-existing", action="store_true",
         help="Skip cases that already have .json and .html output (useful for rerunning after failures)",
+    )
+    batch_p.add_argument(
+        "--best-per-gene", action="store_true",
+        help="Keep only the best-scoring disease per gene in the output",
     )
     batch_p.add_argument(
         "--identifier-type", choices=IDENTIFIER_TYPES, default="ensembl_id",
@@ -652,6 +703,31 @@ def main() -> None:
         help="Whether higher (descending) or lower (ascending) scores rank first (default: descending)",
     )
     pheval_p.set_defaults(func=_cmd_pheval_gene_result)
+
+    # ---- build-db ----
+    builddb_p = sub.add_parser(
+        "build-db",
+        help="Build SCOPE precomputed SQL tables for injection into an H2 database",
+    )
+    builddb_p.add_argument(
+        "--output", type=Path, default=Path("scope_data.sql"),
+        help="Output SQL file (default: scope_data.sql)",
+    )
+    builddb_p.add_argument("--hpo",       type=Path, default=HPO_OBO)
+    builddb_p.add_argument("--hpoa",      type=Path, default=HPOA)
+    builddb_p.add_argument(
+        "--product4", type=Path, default=None,
+        help="Orphanet en_product4.xml (disease-HPO associations)",
+    )
+    builddb_p.add_argument(
+        "--ages", type=Path, default=None,
+        help="Orphanet en_product9_ages.xml (onset data)",
+    )
+    builddb_p.add_argument(
+        "--product1", type=Path, default=None,
+        help="Orphanet en_product1.xml (OMIM-ORPHA cross-references)",
+    )
+    builddb_p.set_defaults(func=_cmd_build_db)
 
     args = parser.parse_args()
     args.func(args)

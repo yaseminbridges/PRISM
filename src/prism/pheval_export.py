@@ -1,7 +1,4 @@
 """Convert PRISM re-ranked JSON reports into PhEval gene result parquet files."""
-
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 
@@ -58,5 +55,11 @@ def export_pheval_gene_results(
                     "gene_identifier": gene_identifier,
                 }
             )
-        completed_df = pl.DataFrame(results)
+        if not results:
+            completed_df = pl.DataFrame(
+                {"score": [], "gene_symbol": [], "gene_identifier": []},
+                schema={"score": pl.Float64, "gene_symbol": pl.Utf8, "gene_identifier": pl.Utf8},
+            )
+        else:
+            completed_df = pl.DataFrame(results)
         generate_gene_result(completed_df, sort_order, output_dir, result_file, phenopacket_dir)

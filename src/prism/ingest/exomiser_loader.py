@@ -36,39 +36,40 @@ _MOI_TO_INHERITANCE: dict[str, bytes] = {
 }
 
 
-def _pick_disease(
+def _pick_diseases(
     diseases: list[dict], moi: str
-) -> tuple[str | None, str | None]:
-    """Return the disease ID/name that best matches this candidate's MOI.
+) -> list[tuple[str | None, str | None]]:
+    """Return ALL diseases matching this candidate's MOI, so each gets its own candidate.
 
-    Context: Exomiser scores each gene once per mode of inheritance it could
-    plausibly act under (e.g. FGFR2 gets separate AD and AR candidates).
-    The parquet stores ALL known diseases for the gene in `associatedDiseases`
-    regardless of MOI, so we have to select the one whose inheritanceMode
-    matches the candidate's MOI to get the right disease label (e.g. Pfeiffer
-    syndrome for FGFR2-AD rather than a recessive FGFR2 condition).
+    Context: a gene like ACTG1 can be associated with multiple diseases under the
+    same MOI (e.g. Deafness AD and Baraitser-Winter syndrome AD). Returning only the
+    first would silently drop the correct diagnosis. Expanding to one candidate per
+    disease lets PRISM's phenotype fit score pick the right one.
 
     Fall-through logic:
-    1. Exact MOI match — normal case.
-    2. AUTOSOMAL_DOMINANT_AND_RECESSIVE — some OMIM entries list a disease
-       under both inheritance modes as a single value; counts for AD or AR.
-    3. Fallback to first disease — handles edge cases where a gene appears
-       under an unexpected MOI (e.g. PAH ranked AD despite all its diseases
-       being AR); preserves a label rather than returning None.
+    1. "ANY" (phenotype-only mode) — return all diseases; no MOI constraint is known.
+    2. Exact MOI match — collect all diseases with matching inheritanceMode.
+    3. AUTOSOMAL_DOMINANT_AND_RECESSIVE — counts for both AD and AR candidates.
+    4. Fallback to first disease only when no MOI match at all.
     """
+    if moi == "ANY":
+        return [(d["diseaseId"], d["diseaseName"]) for d in diseases] or [(None, None)]
+
     target = _MOI_TO_INHERITANCE.get(moi)
-    for d in diseases:
-        if d["inheritanceMode"] == target:
-            return d["diseaseId"], d["diseaseName"]
-    # Some OMIM entries cover both AD and AR under a single inheritanceMode value
-    if moi in ("AD", "AR"):
-        for d in diseases:
-            if d["inheritanceMode"] == b"AUTOSOMAL_DOMINANT_AND_RECESSIVE":
-                return d["diseaseId"], d["diseaseName"]
-    # Fallback: gene appears under an MOI with no matching disease entry
-    if diseases:
-        return diseases[0]["diseaseId"], diseases[0]["diseaseName"]
-    return None, None
+    matched = [
+        (d["diseaseId"], d["diseaseName"])
+        for d in diseases
+        if d["inheritanceMode"] == target
+    ]
+    if not matched and moi in ("AD", "AR"):
+        matched = [
+            (d["diseaseId"], d["diseaseName"])
+            for d in diseases
+            if d["inheritanceMode"] == b"AUTOSOMAL_DOMINANT_AND_RECESSIVE"
+        ]
+    if not matched and diseases:
+        matched = [(diseases[0]["diseaseId"], diseases[0]["diseaseName"])]
+    return matched or [(None, None)]
 
 
 def _decode(value: bytes | str | None) -> str | None:
@@ -94,7 +95,7 @@ def _build_variant(row: dict) -> Variant:
     )
 
 
-def load_exomiser(exomiser_parquet_path: Path) -> list[ExomiserCandidate]:
+def load_exomiser(exomiser_parquet_path: Path, top_n: int | None = None) -> list[ExomiserCandidate]:
     df = pl.read_parquet(exomiser_parquet_path)
 
     # Gene-level scores are identical across all rows sharing (rank, geneSymbol, moi)
@@ -103,7 +104,39 @@ def load_exomiser(exomiser_parquet_path: Path) -> list[ExomiserCandidate]:
         pl.col("genePhenotypeScore").first(),
         pl.col("geneVariantScore").first(),
         pl.col("associatedDiseases").first(),
+    ).sort("rank")
+
+    # Phenotype-only runs use moi="ANY" and penalise geneCombinedScore because there
+    # are no variants. Use genePhenotypeScore as the ranking score in that case.
+    gene_agg = gene_agg.with_columns(
+        pl.when(pl.col("moi") == "ANY")
+        .then(pl.col("genePhenotypeScore"))
+        .otherwise(pl.col("geneCombinedScore"))
+        .alias("_score")
     )
+
+    # Filter to top-N genes before the Python loop so we don't build Pydantic objects
+    # for thousands of genes that will be discarded. Critical for phenotype-only parquets
+    # which can have 16k+ genes all with moi="ANY".
+    #
+    # Standard mode: genes have unique ranks — filter by top-N unique rank values so all
+    #   MOIs of the same gene are kept (FGFR2-AD and FGFR2-AR share the same rank).
+    # Phenotype-only (moi="ANY"): Exomiser assigns the same rank to many tied genes so
+    #   unique-rank filtering keeps everything. Filter by top-N gene symbols by score instead.
+    if top_n is not None:
+        phenotype_only = (gene_agg["moi"] == "ANY").all()
+        if phenotype_only:
+            top_genes = (
+                gene_agg.sort("_score", descending=True)
+                .head(top_n)["geneSymbol"]
+                .to_list()
+            )
+            gene_agg = gene_agg.filter(pl.col("geneSymbol").is_in(top_genes))
+            df = df.filter(pl.col("geneSymbol").is_in(top_genes))
+        else:
+            top_ranks = gene_agg["rank"].unique().sort().head(top_n).to_list()
+            gene_agg = gene_agg.filter(pl.col("rank").is_in(top_ranks))
+            df = df.filter(pl.col("rank").is_in(top_ranks))
 
     # Collect contributing variant fields per candidate
     contrib_agg = (
@@ -124,19 +157,20 @@ def load_exomiser(exomiser_parquet_path: Path) -> list[ExomiserCandidate]:
     candidates: list[ExomiserCandidate] = []
     for row in combined.iter_rows(named=True):
         diseases = row["associatedDiseases"] or []
-        disease_id, disease_name = _pick_disease(diseases, row["moi"])
+        matched_diseases = _pick_diseases(diseases, row["moi"])
         variants = [_build_variant(v) for v in (row["contributing_variants"] or [])]
-        candidates.append(
-            ExomiserCandidate(
-                gene_symbol=row["geneSymbol"],
-                disease_id=disease_id,
-                disease_name=disease_name,
-                moi=row["moi"],
-                exomiser_rank=row["rank"],
-                combined_score=row["geneCombinedScore"],
-                phenotype_score=row["genePhenotypeScore"],
-                variant_score=row["geneVariantScore"],
-                variants=variants,
+        for disease_id, disease_name in matched_diseases:
+            candidates.append(
+                ExomiserCandidate(
+                    gene_symbol=row["geneSymbol"],
+                    disease_id=disease_id,
+                    disease_name=disease_name,
+                    moi=row["moi"],
+                    exomiser_rank=row["rank"],
+                    combined_score=row["_score"],
+                    phenotype_score=row["genePhenotypeScore"],
+                    variant_score=row["geneVariantScore"],
+                    variants=variants,
+                )
             )
-        )
     return candidates

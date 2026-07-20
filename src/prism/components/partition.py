@@ -33,20 +33,25 @@ def partition(
     """
     fit = FitEvidence(disease_id=profile.disease_id)
     matched_feature_ids: set[str] = set()
+    excl_feat_ids = {f.hpo_id for f in profile.excluded_features}
 
     for p_term in patient.observed_terms:
         fm = _best_match(p_term, profile.features, graph, ic_map, profile.disease_id)
         if fm is not None:
             matched_feature_ids.add(fm.disease_feature.hpo_id)
-            # partial matches (LLM-resolved broader terms) are kept separate from
-            # exact/subsumed matches because C2 weights them differently (w_partial < w_match)
             if fm.relation == "partial":
                 fit.partial.append(fm)
             else:
                 fit.matched.append(fm)
         else:
-            # no relationship found at any tier — this patient term is unexplained by this disease
-            fit.unexplained.append(p_term)
+            # Before marking unexplained, check if this term is a contradiction
+            # (patient has a feature the disease explicitly excludes). If so, the
+            # contradiction block below will record it — don't double-count as unexplained.
+            is_contradiction = p_term.id in excl_feat_ids or any(
+                graph.subsumes(eid, p_term.id) for eid in excl_feat_ids
+            )
+            if not is_contradiction:
+                fit.unexplained.append(p_term)
 
     # Expected absent: disease feature not matched AND patient explicitly excluded it
     # (or excluded an ancestor of it, covering it by subsumption)

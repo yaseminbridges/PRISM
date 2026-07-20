@@ -43,7 +43,7 @@ class PRISMConfig(BaseModel):
     orphanet_ages_path: Path | None = ORPHANET_AGES
     orphanet_xref_path: Path | None = ORPHANET_XREF
     top_n: int = 20
-    rescore_mode: str = "conservative"
+    rescore_mode: str = "blended"
     narrative_top_n: int = 3   # generate LLM narrative for this many top candidates
     online_enrichment: bool = False  # off by default — never on inside GEL
 
@@ -69,6 +69,37 @@ def _resolve_onset(
     if hy is not None:
         years.append(hy)
     return min(years) if years else None
+
+
+def _dedup_orpha_omim(
+    candidates: list,
+    orpha: "OrphanetRetriever | None",
+) -> list:
+    """Drop ORPHA candidates that are xrefs of an OMIM candidate in the same (gene, moi) group.
+
+    Exomiser's associatedDiseases can list both OMIM:101600 and ORPHA:710 for the same
+    disease. Keeping both wastes a slot and confuses ranking. We prefer the OMIM entry
+    because HPOA has richer frequency annotations for OMIM IDs.
+    """
+    if not orpha:
+        return candidates
+
+    # Collect OMIM IDs present per (gene, moi) group
+    omim_by_group: dict[tuple, set] = {}
+    for c in candidates:
+        if c.disease_id and c.disease_id.startswith("OMIM:"):
+            key = (c.gene_symbol, c.moi)
+            omim_by_group.setdefault(key, set()).add(c.disease_id)
+
+    result = []
+    for c in candidates:
+        if c.disease_id and c.disease_id.startswith("ORPHA:"):
+            key = (c.gene_symbol, c.moi)
+            omim_ids = omim_by_group.get(key, set())
+            if any(orpha.xref_orpha(oid) == c.disease_id for oid in omim_ids):
+                continue  # covered by OMIM xref — drop the ORPHA duplicate
+        result.append(c)
+    return result
 
 
 def _merge_profiles(
@@ -143,7 +174,15 @@ def run_with_resources(
 
     # Ingest
     patient = load_phenopacket(phenopacket_path)
-    candidates = load_exomiser(exomiser_path)[: config.top_n]
+    # top_n is passed to load_exomiser so Polars filters to top-N ranks before the
+    # Python loop — avoids building thousands of Pydantic objects for phenotype-only
+    # parquets (16k+ genes) that would all be discarded after the rank filter anyway.
+    all_candidates = load_exomiser(exomiser_path, top_n=config.top_n)
+    candidates = _dedup_orpha_omim(all_candidates, orpha)
+
+    if not candidates:
+        return RankedReport(case_id=patient.subject_id, reranked=[], disambiguation=None,
+                            callable_diagnoses=[], narratives={})
 
     # C1 Partition — build FitEvidence per candidate; accumulate profiles for C4
     partitioned: list[ReRankedCandidate] = []

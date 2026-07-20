@@ -1,4 +1,4 @@
-"""C2 — Re-score: pure deterministic fit scoring and conservative re-ranking.
+"""C2 — Re-score: deterministic fit scoring and re-ranking.
 
 The LLM never emits a rank-affecting number — all arithmetic lives here.
 
@@ -8,15 +8,12 @@ fit_raw = Σ w_match   * g(freq) * ic   for matched features
         - Σ w_unexp   * ic             for unexplained patient terms
         - |contradictions| * w_contra
 
-fit_score = tanh(fit_raw)  -- bounded in (-1, 1)
+fit_score = sigmoid(fit_raw / T)  -- bounded in (0, 1), T=2 for good spread
 
-Conservative re-rank: swap two candidates only when BOTH hold:
-  (1) |Δ Exomiser combined_score| <= near_tie_threshold
-  (2) |Δ fit_score| > margin
-
-Aggressive re-rank (config): key = α·exo_norm + (1-α)·fit_score
+Two re-rank modes:
+  prism   — sort by fit_score alone (phenotype fit only, ignores Exomiser)
+  blended — α·exo_norm + (1-α)·fit_norm  (combines Exomiser + PRISM signal)
 """
-import functools
 import math
 from dataclasses import dataclass
 from typing import Literal
@@ -24,6 +21,14 @@ from typing import Literal
 from prism.models.candidate import FitEvidence
 from prism.models.report import ReRankedCandidate
 from prism.ontology.frequency import frequency_class_weight
+
+# Sigmoid temperature: controls spread of fit_score across 0–1.
+# T=2 means fit_raw=±4 maps to ~0.88/0.12 — good granularity for typical cases.
+_SIGMOID_T: float = 2.0
+
+
+def _sigmoid(x: float) -> float:
+    return 1.0 / (1.0 + math.exp(-x / _SIGMOID_T))
 
 
 @dataclass
@@ -34,11 +39,8 @@ class RescoreWeights:
     w_miss: float = 0.5           # penalty per expected-absent feature
     w_unexp: float = 0.3          # penalty per unexplained patient term
     w_contra: float = 1.0  # flat penalty per contradiction (not IC-weighted)
-    # Conservative re-rank thresholds
-    near_tie_threshold: float = 0.05  # Exomiser combined_score delta for "near tie"
-    margin: float = 0.1               # min |Δfit_score| to trigger a conservative swap
-    # Aggressive re-rank blend weight
-    alpha: float = 0.7   # weight of Exomiser score; (1-alpha) is fit_score weight
+    # Blended re-rank weight
+    alpha: float = 0.7            # weight of Exomiser score; (1-alpha) is fit_score weight
 
 
 def _compute_fit_raw(
@@ -81,68 +83,59 @@ def compute_fit_score(
     """
     if weights is None:
         weights = RescoreWeights()
-    return math.tanh(_compute_fit_raw(fit, ic_map, weights))
+    return _sigmoid(_compute_fit_raw(fit, ic_map, weights))
 
 
 def rerank(
     candidates: list[ReRankedCandidate],
     ic_map: dict[str, float],
     weights: RescoreWeights | None = None,
-    mode: Literal["conservative", "aggressive"] = "conservative",
+    mode: Literal["prism", "blended"] = "blended",
 ) -> list[ReRankedCandidate]:
     """Score every candidate's FitEvidence, then re-sort under the chosen mode.
 
     Returns a new list with fit_score, new_rank, and rationale filled in.
+
+    Modes:
+      prism   — rank by PRISM fit_score alone (phenotype fit, ignores Exomiser rank)
+      blended — α·exo_norm + (1-α)·fit_norm (default α=0.7)
     """
     if weights is None:
         weights = RescoreWeights()
 
-    # Step 1 — score: compute fit_raw and fit_score = tanh(fit_raw) for each candidate
+    if not candidates:
+        return []
+
+    # Step 1 — score every candidate
     scored_pairs: list[tuple[ReRankedCandidate, float]] = []
     for rc in candidates:
         raw = _compute_fit_raw(rc.fit, ic_map, weights)
         scored_pairs.append((
-            rc.model_copy(update={"fit": rc.fit.model_copy(update={"fit_score": math.tanh(raw)})}),
+            rc.model_copy(update={"fit": rc.fit.model_copy(update={"fit_score": _sigmoid(raw)})}),
             raw,
         ))
 
     # Step 2 — sort
-    if mode == "aggressive":
-        # AGGRESSIVE MODE: blend Exomiser score (alpha=0.7) with PRISM fit (1-alpha=0.3).
-        # Normalize fit_raw across this candidate set so the blend isn't defeated by
-        # tanh saturation.  When many high-IC unexplained terms drive every candidate
-        # to fit_score ≈ -1.0, dividing by max_abs_raw restores discrimination.
-        max_abs_raw = max(abs(raw) for _, raw in scored_pairs) or 1.0
-        max_exo = max(rc.candidate.combined_score for rc, _ in scored_pairs) or 1.0
+    if mode == "prism":
+        # PRISM mode: rank purely by phenotype fit score, Exomiser score ignored.
+        reranked = [rc for rc, _ in sorted(scored_pairs, key=lambda p: -(p[0].fit.fit_score or 0.0))]
+    else:
+        # BLENDED mode: weighted combination of Exomiser and PRISM scores.
+        # Normalise fit_raw (not fit_score) across the candidate set so the blend
+        # isn't defeated by sigmoid saturation when all candidates score similarly.
+        max_abs_raw = max((abs(raw) for _, raw in scored_pairs), default=1.0) or 1.0
+        max_exo = max((rc.candidate.combined_score for rc, _ in scored_pairs), default=1.0) or 1.0
 
-        def _aggressive_key(pair: tuple[ReRankedCandidate, float]) -> float:
+        def _blended_key(pair: tuple[ReRankedCandidate, float]) -> float:
             rc, raw = pair
             exo_norm = rc.candidate.combined_score / max_exo
-            fit_norm = raw / max_abs_raw  # in (-1, 1), preserves ordering without saturation
-            # Candidates with zero phenotype hits (no matched or partial features)
-            # form a lower tier regardless of Exomiser score: +2 pushes them past
-            # the (-1, 1) range of all other candidates in the ascending sort key.
+            fit_norm = raw / max_abs_raw
+            # Candidates with no phenotype hits form a lower tier regardless of Exomiser score.
             no_hits = not rc.fit.matched and not rc.fit.partial
             tier_penalty = 2.0 if no_hits else 0.0
             return -(weights.alpha * exo_norm + (1 - weights.alpha) * fit_norm) + tier_penalty
 
-        reranked = [rc for rc, _ in sorted(scored_pairs, key=_aggressive_key)]
-    else:
-        # CONSERVATIVE MODE (default): respect Exomiser's ranking unless two candidates
-        # are nearly tied on combined_score AND PRISM's fit_score clearly prefers one.
-        # This means PRISM only intervenes when Exomiser itself was uncertain.
-        scored = [rc for rc, _ in scored_pairs]
-        def _compare(a: ReRankedCandidate, b: ReRankedCandidate) -> int:
-            """Conservative comparator: only override Exomiser on near-tie + fit margin."""
-            score_diff = abs(a.candidate.combined_score - b.candidate.combined_score)
-            if score_diff <= weights.near_tie_threshold:
-                fit_diff = (a.fit.fit_score or 0.0) - (b.fit.fit_score or 0.0)
-                if abs(fit_diff) > weights.margin:
-                    return -1 if fit_diff > 0 else 1
-            if a.candidate.combined_score != b.candidate.combined_score:
-                return -1 if a.candidate.combined_score > b.candidate.combined_score else 1
-            return 0
-        reranked = sorted(scored, key=functools.cmp_to_key(_compare))
+        reranked = [rc for rc, _ in sorted(scored_pairs, key=_blended_key)]
 
     # Step 3 — assign new_rank and rationale
     result: list[ReRankedCandidate] = []

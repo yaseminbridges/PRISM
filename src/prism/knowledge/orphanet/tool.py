@@ -166,6 +166,10 @@ class OrphanetRetriever:
     # Public API
     # ------------------------------------------------------------------
 
+    def xref_orpha(self, omim_id: str) -> str | None:
+        """Return the ORPHA ID that this OMIM ID maps to, or None if no xref exists."""
+        return self._omim_to_orpha.get(omim_id)
+
     def get_disease_profile(
         self,
         disease_id: str,
