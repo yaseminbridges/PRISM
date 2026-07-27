@@ -28,7 +28,7 @@ from pathlib import Path
 from pheval.post_processing.post_processing import SortOrder
 
 from prism.pheval_export import IDENTIFIER_TYPES, export_pheval_gene_results
-from prism._paths import HPO_OBO, HPOA, ORPHANET_P4, ORPHANET_AGES, ORPHANET_XREF
+from prism._paths import list_data_versions, resolve_data_version
 from prism.pipeline import PRISMConfig, PRISMResources, run, run_with_resources
 from prism.reasoning.llm import LLMClient, MockLLMClient
 
@@ -419,9 +419,19 @@ def _build_llm(args) -> LLMClient:
 
 
 def _build_config(args) -> PRISMConfig:
+    version = resolve_data_version(args.data_version)
+    if args.data_version:
+        print(
+            f"[PRISM] Data version: {version.name}  "
+            f"(hpo={version.hpo_path.name}, hpoa={version.hpoa_path.name})",
+            file=sys.stderr,
+        )
     return PRISMConfig(
-        hpo_path=args.hpo,
-        hpoa_path=args.hpoa,
+        hpo_path=args.hpo or version.hpo_path,
+        hpoa_path=args.hpoa or version.hpoa_path,
+        orphanet_product4_path=version.orphanet_p4_path,
+        orphanet_ages_path=version.orphanet_ages_path,
+        orphanet_xref_path=version.orphanet_xref_path,
         top_n=args.top_n,
         rescore_mode=args.mode,
         narrative_top_n=args.narrative_top_n,
@@ -429,8 +439,14 @@ def _build_config(args) -> PRISMConfig:
 
 
 def _add_common_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--hpo",  type=Path, default=HPO_OBO)
-    p.add_argument("--hpoa", type=Path, default=HPOA)
+    p.add_argument("--hpo",  type=Path, default=None, help="Override HPO ontology file (default: base or --data-version)")
+    p.add_argument("--hpoa", type=Path, default=None, help="Override HPOA annotation file (default: base or --data-version)")
+    p.add_argument(
+        "--data-version", default=None,
+        help="Named data version from data/versions/<name>/ "
+             f"(available: {', '.join(list_data_versions()) or 'none'}); "
+             "falls back to base data files for anything the version doesn't override",
+    )
     p.add_argument("--top-n", type=int, default=20)
     p.add_argument(
         "--narrative-top-n", type=int, default=3,
@@ -577,13 +593,16 @@ def _cmd_batch(args) -> None:
 
 def _cmd_build_db(args) -> None:
     from prism.build_scope_db import build
+    version = resolve_data_version(args.data_version)
+    if args.data_version:
+        print(f"[PRISM] Data version: {version.name}", file=sys.stderr)
     build(
         output=args.output,
-        hpo_path=args.hpo,
-        hpoa_path=args.hpoa,
-        product4_path=args.product4 or ORPHANET_P4,
-        ages_path=args.ages or ORPHANET_AGES,
-        product1_path=args.product1 or ORPHANET_XREF,
+        hpo_path=args.hpo or version.hpo_path,
+        hpoa_path=args.hpoa or version.hpoa_path,
+        product4_path=args.product4 or version.orphanet_p4_path,
+        ages_path=args.ages or version.orphanet_ages_path,
+        product1_path=args.product1 or version.orphanet_xref_path,
     )
 
 
@@ -713,8 +732,14 @@ def main() -> None:
         "--output", type=Path, default=Path("scope_data.sql"),
         help="Output SQL file (default: scope_data.sql)",
     )
-    builddb_p.add_argument("--hpo",       type=Path, default=HPO_OBO)
-    builddb_p.add_argument("--hpoa",      type=Path, default=HPOA)
+    builddb_p.add_argument("--hpo",       type=Path, default=None, help="Override HPO ontology file")
+    builddb_p.add_argument("--hpoa",      type=Path, default=None, help="Override HPOA annotation file")
+    builddb_p.add_argument(
+        "--data-version", default=None,
+        help="Named data version from data/versions/<name>/ "
+             f"(available: {', '.join(list_data_versions()) or 'none'}); "
+             "falls back to base data files for anything the version doesn't override",
+    )
     builddb_p.add_argument(
         "--product4", type=Path, default=None,
         help="Orphanet en_product4.xml (disease-HPO associations)",
