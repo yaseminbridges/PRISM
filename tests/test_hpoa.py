@@ -54,3 +54,25 @@ class TestHpoaRetriever:
         profile = small_retriever.get_disease_profile("OMIM:999999")
         assert profile.features == []
         assert profile.excluded_features == []
+
+class TestCardinalityColumn:
+    def test_no_column_gives_none(self, small_retriever):
+        assert small_retriever.has_cardinality is False
+        profile = small_retriever.get_disease_profile("OMIM:601869")
+        assert all(f.cardinality is None for f in profile.features)
+
+    def test_column_parsed_onto_features(self, tmp_path):
+        from prism.knowledge.hpoa.tool import HpoaRetriever
+        header = ("database_id\tdisease_name\tqualifier\thpo_id\treference\tevidence\t"
+                  "onset\tfrequency\tsex\tmodifier\taspect\tbiocuration\tcardinality")
+        rows = [
+            "OMIM:1\tD\t\tHP:0000001\tPMID:1\tPCS\t\tHP:0040280\t\t\tP\tx\tCARDINAL",
+            "OMIM:1\tD\t\tHP:0000002\tPMID:1\tPCS\t\t\t\t\tP\tx\tnon_cardinal",
+            "OMIM:1\tD\t\tHP:0000003\tPMID:1\tPCS\t\t\t\t\tP\tx\t",
+        ]
+        path = tmp_path / "card.hpoa"
+        path.write_text("#comment\n" + header + "\n" + "\n".join(rows) + "\n")
+        retriever = HpoaRetriever(path)
+        assert retriever.has_cardinality is True
+        card = {f.hpo_id: f.cardinality for f in retriever.get_disease_profile("OMIM:1").features}
+        assert card == {"HP:0000001": "CARDINAL", "HP:0000002": "NON_CARDINAL", "HP:0000003": None}

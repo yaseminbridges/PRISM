@@ -435,7 +435,18 @@ def _build_config(args) -> PRISMConfig:
         top_n=args.top_n,
         rescore_mode=args.mode,
         narrative_top_n=args.narrative_top_n,
+        cardinality_mode=args.cardinality,
     )
+
+
+def _parse_top_n(value: str) -> int | None:
+    """--top-n accepts a positive integer, or 'all' (no limit → None)."""
+    if value.lower() == "all":
+        return None
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError("--top-n must be a positive integer or 'all'")
+    return n
 
 
 def _add_common_args(p: argparse.ArgumentParser) -> None:
@@ -447,12 +458,21 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
              f"(available: {', '.join(list_data_versions()) or 'none'}); "
              "falls back to base data files for anything the version doesn't override",
     )
-    p.add_argument("--top-n", type=int, default=20)
+    p.add_argument(
+        "--top-n", type=_parse_top_n, default=20,
+        help="Number of Exomiser genes to re-rank, or 'all' for every gene in the file (default: 20)",
+    )
     p.add_argument(
         "--narrative-top-n", type=int, default=3,
         help="Generate LLM narrative for this many top candidates (default: 3)",
     )
     p.add_argument("--mode", choices=["prism", "blended"], default="blended")
+    p.add_argument(
+        "--cardinality", choices=["off", "match", "miss", "both"], default="off",
+        help="Weight C2 scoring by feature cardinality: on matched features, on "
+             "expected-absent features, or both. Needs an HPOA file with a cardinality "
+             "column (pass via --hpoa).",
+    )
     p.add_argument("--llm", choices=["mock", "ollama"], default="mock")
     p.add_argument("--llm-model", default="qwen2.5:7b")
     p.add_argument("--llm-url", default="http://localhost:11434")

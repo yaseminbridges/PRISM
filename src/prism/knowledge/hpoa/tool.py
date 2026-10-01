@@ -18,6 +18,9 @@ This file provides two things:
    - `get_earliest_onset_years(disease_id)` — returns the earliest typical onset in years
      from HPOA onset annotations, used by C3 (age gate).
 
+If the file has an extra `cardinality` column (CARDINAL / SUPPORTIVE / NON_CARDINAL, e.g.
+phenotype_cardinality.hpoa), it is carried onto each DiseaseFeature for use in C2.
+
 HPOA is the primary knowledge source. Orphanet supplements where HPOA has no data.
 """
 from dataclasses import dataclass, field
@@ -54,6 +57,15 @@ _ONSET_TERM_YEARS: dict[str, float] = {
 }
 
 
+_CARDINALITY_VALUES = {"CARDINAL", "SUPPORTIVE", "NON_CARDINAL"}
+
+
+def _parse_cardinality(raw: str | None) -> str | None:
+    """Normalise a cardinality cell; unknown or empty values become None."""
+    value = (raw or "").strip().upper()
+    return value if value in _CARDINALITY_VALUES else None
+
+
 @dataclass
 class DiseaseProfile:
     disease_id: str
@@ -77,6 +89,8 @@ class HpoaRetriever:
             has_header=True,
             infer_schema_length=0,  # all strings — avoids type-inference surprises
         )
+        self.has_cardinality = "cardinality" in self._df.columns
+
 
     def disease_ids(self) -> list[str]:
         return self._df["database_id"].unique().to_list()
@@ -144,6 +158,7 @@ class HpoaRetriever:
             freq_class, _ = parse_hpoa_frequency(freq_raw)
             label = graph.name(hpo_id) if graph else hpo_id
             ic = (ic_map or {}).get(hpo_id, 0.0)
+            cardinality = _parse_cardinality(row.get("cardinality"))
 
             feat = DiseaseFeature(
                 hpo_id=hpo_id,
@@ -151,6 +166,7 @@ class HpoaRetriever:
                 frequency_class=freq_class,
                 ic=ic,
                 source="HPOA",
+                cardinality=cardinality,
             )
 
             if qualifier == "NOT" or freq_class == "Excluded":

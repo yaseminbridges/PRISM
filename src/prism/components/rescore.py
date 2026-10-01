@@ -2,11 +2,17 @@
 
 The LLM never emits a rank-affecting number — all arithmetic lives here.
 
-fit_raw = Σ w_match   * g(freq) * ic   for matched features
-        + Σ w_partial * g(freq) * ic   for partial matches
-        - Σ w_miss    * g(freq) * ic   for expected_absent (not age_excused)
-        - Σ w_unexp   * ic             for unexplained patient terms
+fit_raw = Σ w_match   * g(freq) * c_match(card) * ic   for matched features
+        + Σ w_partial * g(freq) * c_match(card) * ic   for partial matches
+        - Σ w_miss    * g(freq) * c_miss(card)  * ic   for expected_absent (not age_excused)
+        - Σ w_unexp   * ic                             for unexplained patient terms
         - |contradictions| * w_contra
+
+c_match / c_miss are cardinality multipliers (CARDINAL / SUPPORTIVE / NON_CARDINAL).
+They are 1.0 unless cardinality_mode enables them, so the default formula is unchanged.
+Separate tables for hits and misses because the asymmetry matters: a matched cardinal
+feature is strong evidence for a disease, and a cardinal feature the patient explicitly
+lacks is strong evidence against it, while a missing non-cardinal feature barely matters.
 
 fit_score = sigmoid(fit_raw / T)  -- bounded in (0, 1), T=2 for good spread
 
@@ -15,10 +21,10 @@ Two re-rank modes:
   blended — α·exo_norm + (1-α)·fit_norm  (combines Exomiser + PRISM signal)
 """
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
-from prism.models.candidate import FitEvidence
+from prism.models.candidate import DiseaseFeature, FitEvidence
 from prism.models.report import ReRankedCandidate
 from prism.ontology.frequency import frequency_class_weight
 
@@ -41,6 +47,23 @@ class RescoreWeights:
     w_contra: float = 1.0  # flat penalty per contradiction (not IC-weighted)
     # Blended re-rank weight
     alpha: float = 0.7            # weight of Exomiser score; (1-alpha) is fit_score weight
+    # Cardinality multipliers — which tables apply is set by cardinality_mode so each side
+    # can be ablated on its own. Features without a cardinality label always get 1.0.
+    cardinality_mode: Literal["off", "match", "miss", "both"] = "off"
+    c_match: dict[str, float] = field(default_factory=lambda: {
+        "CARDINAL": 1.5, "SUPPORTIVE": 1.0, "NON_CARDINAL": 0.6,
+    })
+    c_miss: dict[str, float] = field(default_factory=lambda: {
+        "CARDINAL": 2.0, "SUPPORTIVE": 0.7, "NON_CARDINAL": 0.1,
+    })
+
+
+def _cardinality_weight(feat: DiseaseFeature, weights: RescoreWeights, side: Literal["match", "miss"]) -> float:
+    """Cardinality multiplier for one feature on the match or miss side (1.0 when disabled)."""
+    if feat.cardinality is None or weights.cardinality_mode not in (side, "both"):
+        return 1.0
+    table = weights.c_match if side == "match" else weights.c_miss
+    return table.get(feat.cardinality, 1.0)
 
 
 def _compute_fit_raw(
@@ -51,17 +74,23 @@ def _compute_fit_raw(
     """Compute the unnormalized fit score (before tanh)."""
     raw = 0.0
     # Positive contributions — features the patient has that the disease expects.
-    # Weighted by frequency (an obligate feature match matters more than an occasional one)
-    # and by IC (matching a rare/specific term is more informative than a general one).
+    # Weighted by frequency (an obligate feature match matters more than an occasional one),
+    # by cardinality (a hallmark feature matters more than an incidental one) and by IC
+    # (matching a rare/specific term is more informative than a general one).
     for fm in fit.matched:
-        raw += weights.w_match * frequency_class_weight(fm.disease_feature.frequency_class) * fm.disease_feature.ic
+        feat = fm.disease_feature
+        raw += (weights.w_match * frequency_class_weight(feat.frequency_class)
+                * _cardinality_weight(feat, weights, "match") * feat.ic)
     for fm in fit.partial:
         # Partial matches (LLM-resolved broader terms) contribute less than exact matches.
-        raw += weights.w_partial * frequency_class_weight(fm.disease_feature.frequency_class) * fm.disease_feature.ic
+        feat = fm.disease_feature
+        raw += (weights.w_partial * frequency_class_weight(feat.frequency_class)
+                * _cardinality_weight(feat, weights, "match") * feat.ic)
     # Penalties — things that argue against this disease.
     for feat in fit.expected_absent:
         # Disease feature explicitly absent in the patient (age_excused features are not here).
-        raw -= weights.w_miss * frequency_class_weight(feat.frequency_class) * feat.ic
+        raw -= (weights.w_miss * frequency_class_weight(feat.frequency_class)
+                * _cardinality_weight(feat, weights, "miss") * feat.ic)
     for term in fit.unexplained:
         # Patient has a symptom this disease doesn't account for at all.
         raw -= weights.w_unexp * ic_map.get(term.id, 0.0)

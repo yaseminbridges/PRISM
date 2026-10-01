@@ -109,7 +109,7 @@ class TestAgeGateC2Integration:
         score_excused = compute_fit_score(fit_excused, ic_map={}, weights=RescoreWeights())
 
         assert score_excused > score_penalised
-        assert score_excused == pytest.approx(0.0)  # no positive or negative signal
+        assert score_excused == pytest.approx(0.5)  # sigmoid(0): no positive or negative signal
 
 
 # ---------------------------------------------------------------------------

@@ -25,8 +25,11 @@ W = RescoreWeights(
 def _term(hpo_id: str) -> HpoTerm:
     return HpoTerm(id=hpo_id, label=hpo_id)
 
-def _feat(hpo_id: str, freq: str, ic: float) -> DiseaseFeature:
-    return DiseaseFeature(hpo_id=hpo_id, hpo_label=hpo_id, frequency_class=freq, ic=ic, source="HPOA")
+def _feat(hpo_id: str, freq: str, ic: float, cardinality: str | None = None) -> DiseaseFeature:
+    return DiseaseFeature(
+        hpo_id=hpo_id, hpo_label=hpo_id, frequency_class=freq, ic=ic, source="HPOA",
+        cardinality=cardinality,
+    )
 
 def _match(patient_id: str, feat: DiseaseFeature, relation="exact") -> FeatureMatch:
     return FeatureMatch(
@@ -156,6 +159,79 @@ class TestComputeFitScore:
         score_obl = compute_fit_score(_fit(matched=[_match("HP:0001", feat_obl)]), {}, W)
         score_frq = compute_fit_score(_fit(matched=[_match("HP:0002", feat_frq)]), {}, W)
         assert score_obl > score_frq
+
+
+# ---------------------------------------------------------------------------
+# Cardinality weighting
+# ---------------------------------------------------------------------------
+
+def _w(mode: str) -> RescoreWeights:
+    return RescoreWeights(
+        w_match=1.0, w_partial=0.5, w_miss=0.5, w_unexp=0.3, w_contra=1.0,
+        cardinality_mode=mode,
+    )
+
+
+class TestCardinality:
+    def test_off_ignores_cardinality(self):
+        # Default mode: labelled features score exactly as before.
+        feat = _feat("HP:0001", "Obligate", ic=2.0, cardinality="CARDINAL")
+        fit = _fit(matched=[_match("HP:0001", feat)])
+        assert compute_fit_score(fit, {}, W) == pytest.approx(_sig(2.0))
+
+    def test_cardinal_match_boosted(self):
+        # fit_raw = 1.0 * 1.0 * 1.5 * 2.0 = 3.0
+        feat = _feat("HP:0001", "Obligate", ic=2.0, cardinality="CARDINAL")
+        fit = _fit(matched=[_match("HP:0001", feat)])
+        assert compute_fit_score(fit, {}, _w("match")) == pytest.approx(_sig(3.0))
+
+    def test_non_cardinal_match_damped(self):
+        # fit_raw = 1.0 * 1.0 * 0.6 * 2.0 = 1.2
+        feat = _feat("HP:0001", "Obligate", ic=2.0, cardinality="NON_CARDINAL")
+        fit = _fit(matched=[_match("HP:0001", feat)])
+        assert compute_fit_score(fit, {}, _w("both")) == pytest.approx(_sig(1.2))
+
+    def test_partial_uses_match_table(self):
+        # fit_raw = 0.5 * 1.0 * 1.5 * 2.0 = 1.5
+        feat = _feat("HP:0001", "Obligate", ic=2.0, cardinality="CARDINAL")
+        fit = _fit(partial=[_match("HP:0001", feat, relation="partial")])
+        assert compute_fit_score(fit, {}, _w("match")) == pytest.approx(_sig(1.5))
+
+    def test_cardinal_absent_penalised_harder(self):
+        # fit_raw = -0.5 * 1.0 * 2.0 * 4.0 = -4.0
+        feat = _feat("HP:0003", "Obligate", ic=4.0, cardinality="CARDINAL")
+        fit = _fit(expected_absent=[feat])
+        assert compute_fit_score(fit, {}, _w("miss")) == pytest.approx(_sig(-4.0))
+
+    def test_non_cardinal_absent_barely_penalised(self):
+        # fit_raw = -0.5 * 1.0 * 0.1 * 4.0 = -0.2
+        feat = _feat("HP:0003", "Obligate", ic=4.0, cardinality="NON_CARDINAL")
+        fit = _fit(expected_absent=[feat])
+        assert compute_fit_score(fit, {}, _w("both")) == pytest.approx(_sig(-0.2))
+
+    def test_match_mode_leaves_misses_alone(self):
+        feat = _feat("HP:0003", "Obligate", ic=4.0, cardinality="CARDINAL")
+        fit = _fit(expected_absent=[feat])
+        assert compute_fit_score(fit, {}, _w("match")) == pytest.approx(_sig(-2.0))
+
+    def test_miss_mode_leaves_matches_alone(self):
+        feat = _feat("HP:0001", "Obligate", ic=2.0, cardinality="CARDINAL")
+        fit = _fit(matched=[_match("HP:0001", feat)])
+        assert compute_fit_score(fit, {}, _w("miss")) == pytest.approx(_sig(2.0))
+
+    def test_unlabelled_feature_neutral(self):
+        # e.g. Orphanet-sourced features carry no cardinality → multiplier 1.0
+        feat = _feat("HP:0001", "Obligate", ic=2.0)
+        fit = _fit(matched=[_match("HP:0001", feat)], expected_absent=[_feat("HP:0003", "Obligate", ic=4.0)])
+        assert compute_fit_score(fit, {}, _w("both")) == pytest.approx(_sig(0.0))
+
+    def test_cardinal_match_outranks_non_cardinal(self):
+        # Same frequency and IC — cardinality alone decides the order.
+        fit_a = _fit(matched=[_match("HP:0001", _feat("HP:0001", "Frequent", 3.0, "CARDINAL"))])
+        fit_b = _fit(matched=[_match("HP:0001", _feat("HP:0001", "Frequent", 3.0, "NON_CARDINAL"))])
+        candidates = [_rc("B", 0.8, 1, fit_b), _rc("A", 0.8, 2, fit_a)]
+        result = rerank(candidates, ic_map={}, weights=_w("match"), mode="prism")
+        assert [rc.candidate.disease_id for rc in result] == ["A", "B"]
 
 
 # ---------------------------------------------------------------------------

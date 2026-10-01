@@ -4,7 +4,8 @@ This file defines the structures that C1 (partition.py) fills in and C2 (rescore
 scores. These are the core intermediate representations — everything between the raw
 Exomiser output and the final RankedReport.
 
-  DiseaseFeature — one HPO feature from a disease profile, with frequency class and IC.
+  DiseaseFeature — one HPO feature from a disease profile, with frequency class, IC and
+                   (optionally) cardinality — how central the feature is to the disease.
   FeatureMatch   — a pairing of a patient term with a disease feature, with a relation
                    label (exact / subsumed / partial) and provenance text.
   FitEvidence    — the full match sheet for one candidate disease, grouped into buckets:
@@ -20,6 +21,8 @@ from typing import Literal
 from pydantic import BaseModel
 from prism.models.phenopacket import HpoTerm
 
+Cardinality = Literal["CARDINAL", "SUPPORTIVE", "NON_CARDINAL"]
+
 
 class DiseaseFeature(BaseModel):
     hpo_id: str
@@ -27,6 +30,7 @@ class DiseaseFeature(BaseModel):
     frequency_class: str | None
     ic: float
     source: str
+    cardinality: Cardinality | None = None  # None when the source has no cardinality labels
 
 
 class FeatureMatch(BaseModel):

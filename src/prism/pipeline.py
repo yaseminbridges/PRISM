@@ -19,6 +19,8 @@ The pipeline runs in this order for each case:
   10. Narrative — LLM generates plain-English summaries for the top N candidates.
 """
 from pathlib import Path
+from typing import Literal
+
 from pydantic import BaseModel
 
 from prism._paths import HPO_OBO, HPOA, ORPHANET_P4, ORPHANET_AGES, ORPHANET_XREF
@@ -30,7 +32,7 @@ from prism.knowledge.orphanet.tool import OrphanetRetriever
 from prism.models.report import RankedReport, ReRankedCandidate
 from prism.components.partition import partition
 from prism.components.age_gate import apply_age_gate
-from prism.components.rescore import rerank
+from prism.components.rescore import RescoreWeights, rerank
 from prism.components.disambiguate import disambiguate
 from prism.components.mechanism import infer_mechanism_congruence
 from prism.reasoning.llm import LLMClient, MockLLMClient
@@ -42,10 +44,13 @@ class PRISMConfig(BaseModel):
     orphanet_product4_path: Path | None = ORPHANET_P4
     orphanet_ages_path: Path | None = ORPHANET_AGES
     orphanet_xref_path: Path | None = ORPHANET_XREF
-    top_n: int = 20
+    top_n: int | None = 20  # None = every gene in the Exomiser file
     rescore_mode: str = "blended"
     narrative_top_n: int = 3   # generate LLM narrative for this many top candidates
     online_enrichment: bool = False  # off by default — never on inside GEL
+    # C2 cardinality weighting: off | match | miss | both. Needs an HPOA file with a
+    # cardinality column (e.g. phenotype_cardinality.hpoa); PRISMResources raises otherwise.
+    cardinality_mode: Literal["off", "match", "miss", "both"] = "off"
 
 
 def _resolve_onset(
@@ -139,6 +144,11 @@ class PRISMResources:
         self.config = config
         self.graph = HPOGraph.from_obo(config.hpo_path)
         self.hpoa = HpoaRetriever(config.hpoa_path)
+        if config.cardinality_mode != "off" and not self.hpoa.has_cardinality:
+            raise ValueError(
+                f"cardinality_mode={config.cardinality_mode!r} needs an HPOA file with a "
+                f"'cardinality' column, but {config.hpoa_path} has none"
+            )
         self.ic_map = self.graph.compute_ic(self.hpoa.disease_to_terms())
 
         self.orpha: OrphanetRetriever | None = None
@@ -218,7 +228,11 @@ def run_with_resources(
         ))
 
     # C2 Re-score and conservative re-rank
-    reranked = rerank(partitioned, ic_map, mode=config.rescore_mode)
+    reranked = rerank(
+        partitioned, ic_map,
+        weights=RescoreWeights(cardinality_mode=config.cardinality_mode),
+        mode=config.rescore_mode,
+    )
 
     # C5 Mechanism congruence — annotate each candidate with variant evidence verdict
     reranked = [

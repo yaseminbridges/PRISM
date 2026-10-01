@@ -10,7 +10,7 @@ class TestPhenopacketLoader:
         p = load_phenopacket(gipc3_phenopacket)
         assert p.subject_id == "proband-gipc3"
         assert p.sex == "male"
-        assert p.age_years is None  # age parsing deferred
+        assert p.age_years == pytest.approx(8.0)  # fixture age: P8Y
 
     def test_gipc3_observed_terms(self, gipc3_phenopacket):
         p = load_phenopacket(gipc3_phenopacket)

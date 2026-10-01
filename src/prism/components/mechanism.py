@@ -37,7 +37,7 @@ _VUS_ACMG        = frozenset({"UNCERTAIN_SIGNIFICANCE", "VUS"})
 # MOI strings Exomiser may emit — normalised to the canonical form after upper()
 _RECESSIVE_MOI = frozenset({
     "AUTOSOMAL_RECESSIVE", "AR",
-    "X_LINKED_RECESSIVE",  "XR",
+    "X_LINKED_RECESSIVE",  "XR", "XLR",
 })
 
 
