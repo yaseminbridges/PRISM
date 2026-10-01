@@ -472,7 +472,7 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
         "--cardinality", choices=["off", "match", "miss", "both"], default="off",
         help="Weight C2 scoring by feature cardinality: on matched features, on "
              "expected-absent features, or both. Needs an HPOA file with a cardinality "
-             "column (pass via --hpoa).",
+             "column (--data-version cardinality, or pass one via --hpoa).",
     )
     p.add_argument("--llm", choices=["mock", "ollama"], default="mock")
     p.add_argument("--llm-model", default="qwen2.5:7b")
