@@ -27,6 +27,7 @@ from pathlib import Path
 
 from pheval.post_processing.post_processing import SortOrder
 
+from prism.exomiser_export import write_exomiser_with_prism_scores
 from prism.pheval_export import IDENTIFIER_TYPES, export_pheval_gene_results
 from prism._paths import list_data_versions, resolve_data_version
 from prism.pipeline import PRISMConfig, PRISMResources, run, run_with_resources
@@ -487,6 +488,10 @@ def _cmd_run(args) -> None:
     llm = _build_llm(args)
     config = _build_config(args)
     report = run(args.phenopacket, args.exomiser, config=config, llm=llm)
+    if args.exomiser_output:
+        # Before --best-per-gene so every (gene, MOI) in the parquet can get a score
+        write_exomiser_with_prism_scores(args.exomiser, report, args.exomiser_output)
+        print(f"[PRISM] Exomiser parquet with PRISM scores written to {args.exomiser_output}", file=sys.stderr)
     if getattr(args, "best_per_gene", False):
         report = _filter_best_per_gene(report)
 
@@ -570,6 +575,12 @@ def _cmd_batch(args) -> None:
             print(f"  [warn]  {pp.name}  — no Exomiser candidates, skipping", file=sys.stderr)
             skipped += 1
             continue
+
+        if args.write_exomiser:
+            # Before --best-per-gene so every (gene, MOI) in the parquet can get a score
+            write_exomiser_with_prism_scores(
+                exomiser_path, report, output_dir / "exomiser_results" / exomiser_path.name
+            )
 
         if args.best_per_gene:
             report = _filter_best_per_gene(report)
@@ -667,6 +678,11 @@ def main() -> None:
         "--best-per-gene", action="store_true",
         help="Keep only the best-scoring disease per gene in the output",
     )
+    run_p.add_argument(
+        "--exomiser-output", type=Path, default=None,
+        help="Also write a copy of the Exomiser parquet with PRISM score columns "
+             "(prismDiseasePhenotypeScore, prismDiseaseId, prismRank) to this path",
+    )
     _add_common_args(run_p)
     run_p.set_defaults(func=_cmd_run)
 
@@ -695,6 +711,12 @@ def main() -> None:
     batch_p.add_argument(
         "--best-per-gene", action="store_true",
         help="Keep only the best-scoring disease per gene in the output",
+    )
+    batch_p.add_argument(
+        "--write-exomiser", action="store_true",
+        help="Also write each Exomiser parquet with PRISM score columns "
+             "(prismDiseasePhenotypeScore, prismDiseaseId, prismRank) to "
+             "<output-dir>/exomiser_results/",
     )
     batch_p.add_argument(
         "--identifier-type", choices=IDENTIFIER_TYPES, default="ensembl_id",
