@@ -29,6 +29,13 @@ prism batch cases/ --output-dir out/ --data-version augmented
 ## Bundled versions
 
 - `2512` — HPO / HPOA / Orphanet from the 2025-11-24 HPO release.
+- `2602` — `hp.obo` and `phenotype.hpoa` from the 2026-01-08 HPO release. Orphanet
+  falls back to the base files: `en_product4.xml` and `en_product9_ages.xml` from
+  2025-12-09, `en_product1.xml` (OMIM↔ORPHA xrefs) from 2026-06-23.
+- `2602_cardinality` — the `2602` files (2026-01-08 `hp.obo` and `phenotype.hpoa`, same
+  rows, no additions) with the `cardinality` column copied from `cardinality`, matched on
+  database_id + hpo_id + qualifier + aspect. 510 rows (421 phenotype) have no match in the
+  2026-06-23 release and are left empty, which C2 treats as neutral (×1.0). Orphanet as `2602`.
 - `cardinality` — `phenotype.hpoa` from the 2026-06-23 HPOA release with an extra
   `cardinality` column (CARDINAL / SUPPORTIVE / NON_CARDINAL), LLM-assigned per
   disease–phenotype annotation. Uses the base `hp.obo` (2026-06-06), which contains
