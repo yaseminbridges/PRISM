@@ -90,6 +90,10 @@ def _summary(report) -> str:
             for fm in fit.partial:
                 lines.append(f"       LLM partial: {fm.patient_term.label} ≈ {fm.disease_feature.hpo_label}")
                 lines.append(f"                  provenance: {fm.provenance[:100]}")
+        if fit.redundant:
+            terms = ", ".join(f"{fm.patient_term.label} → {fm.disease_feature.hpo_label}" for fm in fit.redundant[:3])
+            suffix = f" (+{len(fit.redundant)-3} more)" if len(fit.redundant) > 3 else ""
+            lines.append(f"       already counted: {terms}{suffix}")
         if fit.unexplained:
             terms = ", ".join(t.label for t in fit.unexplained[:3])
             suffix = f" (+{len(fit.unexplained)-3} more)" if len(fit.unexplained) > 3 else ""
@@ -336,6 +340,14 @@ def _feature_detail(rc, narratives: dict) -> str:
                 f'<br><span style="font-size:.75rem;color:#555">{_e(fm.provenance[:120])}</span>'
             )
         parts.append(f'<div class="feat-label">LLM partial</div><div class="feat-val">{"<br>".join(rows)}</div>')
+
+    if fit.redundant:
+        tags = "".join(
+            f'<span class="tag" title="{_e(fm.disease_feature.hpo_label)} already credited to another term">'
+            f'{_e(fm.patient_term.label or fm.patient_term.id)} &#8594; {_e(fm.disease_feature.hpo_label)}</span>'
+            for fm in fit.redundant
+        )
+        parts.append(f'<div class="feat-label">Already counted</div><div class="feat-val">{tags}</div>')
 
     if fit.unexplained:
         tags = "".join(

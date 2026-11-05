@@ -11,6 +11,8 @@ Exomiser output and the final RankedReport.
   FitEvidence    — the full match sheet for one candidate disease, grouped into buckets:
                      matched        (patient term aligns to disease feature)
                      partial        (LLM-resolved broader patient term)
+                     redundant      (patient terms explained only by a feature another
+                                     term already matched — no penalty, no extra credit)
                      unexplained    (patient terms the disease doesn't account for)
                      expected_absent (disease features the patient explicitly lacks)
                      age_excused    (expected_absent excused by developmental timing — C3)
@@ -44,6 +46,7 @@ class FitEvidence(BaseModel):
     disease_id: str
     matched: list[FeatureMatch] = []
     partial: list[FeatureMatch] = []
+    redundant: list[FeatureMatch] = []          # explained by a feature already credited to another term
     unexplained: list[HpoTerm] = []             # patient terms this disease does not cover
     expected_absent: list[DiseaseFeature] = []  # cardinal feats assessed-absent in patient
     age_excused: list[DiseaseFeature] = []      # absent but onset > patient age -> monitor

@@ -222,3 +222,42 @@ class TestProvenance:
         profile = _profile("OMIM:999", [_feat("HP:0000399", "Prelingual SHL")])
         fit = partition(patient, profile, small_graph, IC_MAP)
         assert "IC gap" in fit.partial[0].provenance
+
+# ---------------------------------------------------------------------------
+# Each disease feature credited once
+# ---------------------------------------------------------------------------
+
+class TestFeatureCreditedOnce:
+    def test_two_terms_under_one_feature(self, small_graph):
+        # Camptodactyly and Broad thumb both sit under Abnormality of the hand
+        profile = _profile("OMIM:1", [_feat("HP:0001155", "Abnormality of the hand")])
+        fit = partition(_patient("HP:0001161", "HP:0011304"), profile, small_graph, IC_MAP)
+        assert len(fit.matched) == 1
+        assert len(fit.redundant) == 1
+        assert fit.unexplained == []  # the second term is explained, just not re-credited
+
+    def test_exact_preferred_over_subsumed(self, small_graph):
+        profile = _profile("OMIM:1", [_feat("HP:0000407", "Sensorineural hearing impairment")])
+        fit = partition(_patient("HP:0000399", "HP:0000407"), profile, small_graph, IC_MAP)
+        assert [fm.patient_term.id for fm in fit.matched] == ["HP:0000407"]
+        assert fit.matched[0].relation == "exact"
+        assert [fm.patient_term.id for fm in fit.redundant] == ["HP:0000399"]
+
+    def test_assignment_uses_both_features(self, small_graph):
+        # Camptodactyly matches finger and hand; Broad thumb only hand.
+        # Camptodactyly should take finger so Broad thumb can still take hand.
+        profile = _profile("OMIM:1", [
+            _feat("HP:0001155", "Abnormality of the hand", ic=1.0),
+            _feat("HP:0001167", "Abnormality of finger", ic=2.0),
+        ])
+        fit = partition(_patient("HP:0011304", "HP:0001161"), profile, small_graph, IC_MAP)
+        pairs = {(fm.patient_term.id, fm.disease_feature.hpo_id) for fm in fit.matched}
+        assert pairs == {("HP:0001161", "HP:0001167"), ("HP:0011304", "HP:0001155")}
+        assert fit.redundant == []
+
+    def test_redundant_adds_no_score(self, small_graph):
+        from prism.components.rescore import compute_fit_score
+        profile = _profile("OMIM:1", [_feat("HP:0001155", "Abnormality of the hand", ic=2.0)])
+        one = partition(_patient("HP:0001161"), profile, small_graph, IC_MAP)
+        two = partition(_patient("HP:0001161", "HP:0011304"), profile, small_graph, IC_MAP)
+        assert compute_fit_score(two, {}) == pytest.approx(compute_fit_score(one, {}))

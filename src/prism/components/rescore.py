@@ -184,6 +184,8 @@ def _rationale(rc: ReRankedCandidate, new_rank: int) -> str:
         parts.append(f"matched={len(fit.matched)}")
     if fit.partial:
         parts.append(f"partial={len(fit.partial)}")
+    if fit.redundant:
+        parts.append(f"redundant={len(fit.redundant)}")
     if fit.unexplained:
         parts.append(f"unexplained={len(fit.unexplained)}")
     if fit.expected_absent:

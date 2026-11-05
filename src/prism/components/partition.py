@@ -3,6 +3,7 @@
 from prism.models.phenopacket import HpoTerm, PatientPhenotype
 from prism.models.candidate import DiseaseFeature, FeatureMatch, FitEvidence
 from prism.knowledge.hpoa.tool import DiseaseProfile
+from prism.ontology.frequency import frequency_class_weight
 from prism.ontology.hpo import HPOGraph
 
 # Maximum IC gap allowed for a partial match (patient broader than disease feature).
@@ -27,6 +28,14 @@ def partition(
       subsumed  — patient term is a descendant of disease feature (patient is more specific)
       partial   — patient term is an ancestor of disease feature (patient is broader) → LLM
 
+    Each disease feature is credited to at most one patient term — otherwise several
+    patient terms under one broad feature (e.g. "Bilateral SNHI" and "Childhood onset
+    SNHI" under "Sensorineural hearing impairment") would each score it. Assignment is
+    global: pairs are taken best-first (exact > subsumed > partial, then by
+    freq-weight × IC of the feature, then by patient-term IC). A patient term whose only
+    matches are already taken goes to `redundant`: explained, so not penalised as
+    unexplained, but adds no further credit.
+
     Disease-level checks:
       expected_absent  — unmatched disease feature explicitly excluded by the patient
       contradictions   — disease-excluded feature (Excluded/qualifier=NOT) the patient has
@@ -35,14 +44,39 @@ def partition(
     matched_feature_ids: set[str] = set()
     excl_feat_ids = {f.hpo_id for f in profile.excluded_features}
 
+    candidates = [
+        fm
+        for p_term in patient.observed_terms
+        for fm in _candidate_matches(p_term, profile.features, graph, ic_map, profile.disease_id)
+    ]
+    candidates.sort(key=lambda fm: (
+        _RELATION_PRIORITY[fm.relation],
+        -frequency_class_weight(fm.disease_feature.frequency_class) * fm.disease_feature.ic,
+        -ic_map.get(fm.patient_term.id, 0.0),
+    ))
+
+    assigned_terms: set[str] = set()
+    for fm in candidates:
+        if fm.patient_term.id in assigned_terms or fm.disease_feature.hpo_id in matched_feature_ids:
+            continue
+        assigned_terms.add(fm.patient_term.id)
+        matched_feature_ids.add(fm.disease_feature.hpo_id)
+        if fm.relation == "partial":
+            fit.partial.append(fm)
+        else:
+            fit.matched.append(fm)
+
+    # Best (already-taken) match per remaining term, for terms that had any match at all
+    redundant: dict[str, FeatureMatch] = {}
+    for fm in candidates:
+        if fm.patient_term.id not in assigned_terms:
+            redundant.setdefault(fm.patient_term.id, fm)
+
     for p_term in patient.observed_terms:
-        fm = _best_match(p_term, profile.features, graph, ic_map, profile.disease_id)
-        if fm is not None:
-            matched_feature_ids.add(fm.disease_feature.hpo_id)
-            if fm.relation == "partial":
-                fit.partial.append(fm)
-            else:
-                fit.matched.append(fm)
+        if p_term.id in assigned_terms:
+            continue
+        if p_term.id in redundant:
+            fit.redundant.append(redundant[p_term.id])
         else:
             # Before marking unexplained, check if this term is a contradiction
             # (patient has a feature the disease explicitly excludes). If so, the
@@ -79,27 +113,27 @@ def partition(
 # Internal helpers
 # ------------------------------------------------------------------
 
-def _best_match(
+_RELATION_PRIORITY: dict[str, int] = {"exact": 0, "subsumed": 1, "partial": 2}
+
+
+def _candidate_matches(
     p_term: HpoTerm,
     features: list[DiseaseFeature],
     graph: HPOGraph,
     ic_map: dict[str, float],
     disease_id: str,
-) -> FeatureMatch | None:
-    """Return the best FeatureMatch for p_term against the disease feature list.
+) -> list[FeatureMatch]:
+    """Return every FeatureMatch between p_term and the disease features.
 
-    Priority: exact > subsumed > partial (LLM-resolved).
-    Returns None if no relationship found.
+    Relations: exact (same ID), subsumed (patient more specific), partial (patient
+    broader, within MAX_IC_GAP). partition() picks among them so that each disease
+    feature is credited once.
     """
-    # We keep the best candidate per tier and return the highest-priority one at the end.
-    # Priority: exact > subsumed > partial (LLM). Only one match per patient term is returned.
-    subsumed: FeatureMatch | None = None
-    partial: FeatureMatch | None = None
-
+    matches: list[FeatureMatch] = []
     for feat in features:
         if p_term.id == feat.hpo_id:
-            # Exact match — patient and disease use the identical HPO term. Return immediately.
-            return FeatureMatch(
+            # Exact match — patient and disease use the identical HPO term.
+            matches.append(FeatureMatch(
                 patient_term=p_term,
                 disease_feature=feat,
                 relation="exact",
@@ -107,31 +141,30 @@ def _best_match(
                     f"{feat.source}: {disease_id} annotated with "
                     f"{feat.hpo_id} ({feat.frequency_class})"
                 ),
-            )
+            ))
 
-        if graph.subsumes(feat.hpo_id, p_term.id):
+        elif graph.subsumes(feat.hpo_id, p_term.id):
             # Subsumed: disease feature is an ancestor of the patient term.
             # The patient has a more specific variant of what the disease expects — still counts.
-            if subsumed is None:
-                subsumed = FeatureMatch(
-                    patient_term=p_term,
-                    disease_feature=feat,
-                    relation="subsumed",
-                    provenance=(
-                        f"{feat.source}: {disease_id} annotated with "
-                        f"{feat.hpo_label} ({feat.hpo_id}, {feat.frequency_class}); "
-                        f"patient has more specific term {p_term.label} ({p_term.id})"
-                    ),
-                )
+            matches.append(FeatureMatch(
+                patient_term=p_term,
+                disease_feature=feat,
+                relation="subsumed",
+                provenance=(
+                    f"{feat.source}: {disease_id} annotated with "
+                    f"{feat.hpo_label} ({feat.hpo_id}, {feat.frequency_class}); "
+                    f"patient has more specific term {p_term.label} ({p_term.id})"
+                ),
+            ))
 
-        elif graph.subsumes(p_term.id, feat.hpo_id) and partial is None:
+        elif graph.subsumes(p_term.id, feat.hpo_id):
             # Partial: patient has a broader (ancestor) term than the disease expects.
             # Accept only if the IC gap is within MAX_IC_GAP — i.e. the patient's term
             # is specific enough to be informative. A large gap (e.g. "Abnormality of
             # nervous system" vs "Focal clonic seizure") means the match is too vague.
             patient_ic = ic_map.get(p_term.id, 0.0)
             if feat.ic - patient_ic <= MAX_IC_GAP:
-                partial = FeatureMatch(
+                matches.append(FeatureMatch(
                     patient_term=p_term,
                     disease_feature=feat,
                     relation="partial",
@@ -141,6 +174,6 @@ def _best_match(
                         f"{p_term.label} ({p_term.id}, IC={patient_ic:.1f}); "
                         f"IC gap {feat.ic - patient_ic:.1f} ≤ {MAX_IC_GAP}"
                     ),
-                )
+                ))
 
-    return subsumed or partial
+    return matches
