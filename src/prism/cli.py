@@ -481,9 +481,10 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument("--mode", choices=["prism", "blended"], default="blended")
     p.add_argument(
-        "--cardinality", choices=["off", "match", "miss", "both"], default="off",
+        "--cardinality", choices=["off", "match", "miss", "both", "only"], default="off",
         help="Weight C2 scoring by feature cardinality: on matched features, on "
-             "expected-absent features, or both. Needs an HPOA file with a cardinality "
+             "expected-absent features, or both; 'only' scores on the cardinality labels "
+             "alone, with no frequency or IC weighting. Needs an HPOA file with a cardinality "
              "column (--data-version cardinality, or pass one via --hpoa).",
     )
     p.add_argument("--llm", choices=["mock", "ollama"], default="mock")

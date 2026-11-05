@@ -1,4 +1,5 @@
 """C1 — Partition: build the per-candidate FitEvidence fit sheet."""
+from typing import Callable
 
 from prism.models.phenopacket import HpoTerm, PatientPhenotype
 from prism.models.candidate import DiseaseFeature, FeatureMatch, FitEvidence
@@ -20,6 +21,7 @@ def partition(
     profile: DiseaseProfile,
     graph: HPOGraph,
     ic_map: dict[str, float],
+    feature_value: Callable[[DiseaseFeature], float] | None = None,
 ) -> FitEvidence:
     """Partition patient phenotype against a disease profile into FitEvidence buckets.
 
@@ -32,7 +34,7 @@ def partition(
     patient terms under one broad feature (e.g. "Bilateral SNHI" and "Childhood onset
     SNHI" under "Sensorineural hearing impairment") would each score it. Assignment is
     global: pairs are taken best-first (exact > subsumed > partial, then by
-    freq-weight × IC of the feature, then by patient-term IC). A patient term whose only
+    feature_value — default freq-weight × IC of the feature — then by patient-term IC). A patient term whose only
     matches are already taken goes to `redundant`: explained, so not penalised as
     unexplained, but adds no further credit.
 
@@ -49,9 +51,11 @@ def partition(
         for p_term in patient.observed_terms
         for fm in _candidate_matches(p_term, profile.features, graph, ic_map, profile.disease_id)
     ]
+    if feature_value is None:
+        feature_value = _freq_ic_value
     candidates.sort(key=lambda fm: (
         _RELATION_PRIORITY[fm.relation],
-        -frequency_class_weight(fm.disease_feature.frequency_class) * fm.disease_feature.ic,
+        -feature_value(fm.disease_feature),
         -ic_map.get(fm.patient_term.id, 0.0),
     ))
 
@@ -114,6 +118,11 @@ def partition(
 # ------------------------------------------------------------------
 
 _RELATION_PRIORITY: dict[str, int] = {"exact": 0, "subsumed": 1, "partial": 2}
+
+
+def _freq_ic_value(feat: DiseaseFeature) -> float:
+    """Default worth of a disease feature when choosing between matches: g(freq) × IC."""
+    return frequency_class_weight(feat.frequency_class) * feat.ic
 
 
 def _candidate_matches(

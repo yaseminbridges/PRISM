@@ -10,6 +10,18 @@ fit_raw = Σ w_match   * g(freq) * c_match(card) * ic   for matched features
 
 c_match / c_miss are cardinality multipliers (CARDINAL / SUPPORTIVE / NON_CARDINAL).
 They are 1.0 unless cardinality_mode enables them, so the default formula is unchanged.
+
+cardinality_mode="only" scores on the cardinality labels alone — no frequency, no IC:
+
+fit_raw = Σ w_match   * c_match(card)   for matched features
+        + Σ w_partial * c_match(card)   for partial matches
+        - Σ w_miss    * c_miss(card)    for expected_absent (not age_excused)
+        - Σ w_unexp                     per unexplained patient term (flat)
+        - |contradictions| * w_contra
+
+Ontology matching (exact / subsumed / partial, MAX_IC_GAP) is unchanged; only the scoring
+drops frequency and IC. Features without a label count 1.0. Raw scores are on a smaller
+scale than the default formula, so fit_score sits closer to 0.5.
 Separate tables for hits and misses because the asymmetry matters: a matched cardinal
 feature is strong evidence for a disease, and a cardinal feature the patient explicitly
 lacks is strong evidence against it, while a missing non-cardinal feature barely matters.
@@ -49,7 +61,7 @@ class RescoreWeights:
     alpha: float = 0.7            # weight of Exomiser score; (1-alpha) is fit_score weight
     # Cardinality multipliers — which tables apply is set by cardinality_mode so each side
     # can be ablated on its own. Features without a cardinality label always get 1.0.
-    cardinality_mode: Literal["off", "match", "miss", "both"] = "off"
+    cardinality_mode: Literal["off", "match", "miss", "both", "only"] = "off"
     c_match: dict[str, float] = field(default_factory=lambda: {
         "CARDINAL": 1.5, "SUPPORTIVE": 1.0, "NON_CARDINAL": 0.6,
     })
@@ -60,7 +72,7 @@ class RescoreWeights:
 
 def _cardinality_weight(feat: DiseaseFeature, weights: RescoreWeights, side: Literal["match", "miss"]) -> float:
     """Cardinality multiplier for one feature on the match or miss side (1.0 when disabled)."""
-    if feat.cardinality is None or weights.cardinality_mode not in (side, "both"):
+    if feat.cardinality is None or weights.cardinality_mode not in (side, "both", "only"):
         return 1.0
     table = weights.c_match if side == "match" else weights.c_miss
     return table.get(feat.cardinality, 1.0)
@@ -71,7 +83,9 @@ def _compute_fit_raw(
     ic_map: dict[str, float],
     weights: RescoreWeights,
 ) -> float:
-    """Compute the unnormalized fit score (before tanh)."""
+    """Compute the unnormalized fit score (before the sigmoid)."""
+    if weights.cardinality_mode == "only":
+        return _compute_fit_raw_cardinality_only(fit, weights)
     raw = 0.0
     # Positive contributions — features the patient has that the disease expects.
     # Weighted by frequency (an obligate feature match matters more than an occasional one),
@@ -96,6 +110,20 @@ def _compute_fit_raw(
         raw -= weights.w_unexp * ic_map.get(term.id, 0.0)
     # Contradictions get a flat penalty — the disease says this feature should NOT be present,
     # but the patient has it. A strong negative signal regardless of how rare the feature is.
+    raw -= len(fit.contradictions) * weights.w_contra
+    return raw
+
+
+def _compute_fit_raw_cardinality_only(fit: FitEvidence, weights: RescoreWeights) -> float:
+    """fit_raw from cardinality labels alone — frequency and IC play no part."""
+    raw = 0.0
+    for fm in fit.matched:
+        raw += weights.w_match * _cardinality_weight(fm.disease_feature, weights, "match")
+    for fm in fit.partial:
+        raw += weights.w_partial * _cardinality_weight(fm.disease_feature, weights, "match")
+    for feat in fit.expected_absent:
+        raw -= weights.w_miss * _cardinality_weight(feat, weights, "miss")
+    raw -= len(fit.unexplained) * weights.w_unexp
     raw -= len(fit.contradictions) * weights.w_contra
     return raw
 

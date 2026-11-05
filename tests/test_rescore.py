@@ -316,3 +316,27 @@ class TestRerankBlended:
         fit = _fit()
         result = rerank([_rc("A", 0.85, 1, fit)], ic_map={}, weights=W)
         assert "fit=" in result[0].rationale
+
+class TestCardinalityOnly:
+    def test_ignores_frequency_and_ic(self):
+        # fit_raw = 1.0 * 1.5 — Occasional frequency and IC=9.0 play no part
+        feat = _feat("HP:0001", "Occasional", ic=9.0, cardinality="CARDINAL")
+        fit = _fit(matched=[_match("HP:0001", feat)])
+        assert compute_fit_score(fit, {}, _w("only")) == pytest.approx(_sig(1.5))
+
+    def test_all_terms(self):
+        # +1.0*1.5 (cardinal match) +0.5*0.6 (non-cardinal partial) -0.5*2.0 (cardinal absent)
+        # -0.3 (one unexplained, flat) -1.0 (one contradiction) = -0.5
+        fit = _fit(
+            matched=[_match("HP:0001", _feat("HP:0001", "Obligate", 5.0, "CARDINAL"))],
+            partial=[_match("HP:0002", _feat("HP:0002", "Frequent", 5.0, "NON_CARDINAL"), relation="partial")],
+            expected_absent=[_feat("HP:0003", "Obligate", 5.0, "CARDINAL")],
+            unexplained=[_term("HP:0004")],
+            contradictions=[_feat("HP:0005", "Excluded", 0.0)],
+        )
+        assert compute_fit_score(fit, {"HP:0004": 8.0}, _w("only")) == pytest.approx(_sig(-0.5))
+
+    def test_unlabelled_feature_counts_one(self):
+        feat = _feat("HP:0001", "Obligate", ic=4.0)
+        fit = _fit(matched=[_match("HP:0001", feat)])
+        assert compute_fit_score(fit, {}, _w("only")) == pytest.approx(_sig(1.0))

@@ -29,6 +29,7 @@ from prism.ingest.exomiser_loader import load_exomiser
 from prism.ontology.hpo import HPOGraph
 from prism.knowledge.hpoa.tool import DiseaseProfile, HpoaRetriever
 from prism.knowledge.orphanet.tool import OrphanetRetriever
+from prism.models.candidate import DiseaseFeature
 from prism.models.report import RankedReport, ReRankedCandidate
 from prism.components.partition import partition
 from prism.components.age_gate import apply_age_gate
@@ -48,9 +49,10 @@ class PRISMConfig(BaseModel):
     rescore_mode: str = "blended"
     narrative_top_n: int = 3   # generate LLM narrative for this many top candidates
     online_enrichment: bool = False  # off by default — never on inside GEL
-    # C2 cardinality weighting: off | match | miss | both. Needs an HPOA file with a
-    # cardinality column (e.g. phenotype_cardinality.hpoa); PRISMResources raises otherwise.
-    cardinality_mode: Literal["off", "match", "miss", "both"] = "off"
+    # C2 cardinality weighting: off | match | miss | both | only (labels alone, no
+    # frequency or IC). Needs an HPOA file with a cardinality column (e.g. the
+    # cardinality data versions); PRISMResources raises otherwise.
+    cardinality_mode: Literal["off", "match", "miss", "both", "only"] = "off"
 
 
 def _resolve_onset(
@@ -194,6 +196,15 @@ def run_with_resources(
         return RankedReport(case_id=patient.subject_id, reranked=[], disambiguation=None,
                             callable_diagnoses=[], narratives={})
 
+    # In cardinality-only scoring, choose between competing matches by cardinality
+    # weight too, so frequency/IC don't steer the score through the back door.
+    weights = RescoreWeights(cardinality_mode=config.cardinality_mode)
+
+    def _cardinality_value(feat: DiseaseFeature) -> float:
+        return weights.c_match.get(feat.cardinality, 1.0)
+
+    feature_value = _cardinality_value if config.cardinality_mode == "only" else None
+
     # C1 Partition — build FitEvidence per candidate; accumulate profiles for C4
     partitioned: list[ReRankedCandidate] = []
     profiles: dict[str, DiseaseProfile] = {}
@@ -213,7 +224,7 @@ def run_with_resources(
         if disease_id:
             profiles[disease_id] = profile
 
-        fit = partition(patient, profile, graph, ic_map)
+        fit = partition(patient, profile, graph, ic_map, feature_value=feature_value)
 
         # C3 Age gate — excuse expected_absent features if disease onset > patient age
         onset_years = _resolve_onset(disease_id, hpoa, orpha)
@@ -230,7 +241,7 @@ def run_with_resources(
     # C2 Re-score and conservative re-rank
     reranked = rerank(
         partitioned, ic_map,
-        weights=RescoreWeights(cardinality_mode=config.cardinality_mode),
+        weights=weights,
         mode=config.rescore_mode,
     )
 

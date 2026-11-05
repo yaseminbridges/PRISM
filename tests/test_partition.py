@@ -261,3 +261,16 @@ class TestFeatureCreditedOnce:
         one = partition(_patient("HP:0001161"), profile, small_graph, IC_MAP)
         two = partition(_patient("HP:0001161", "HP:0011304"), profile, small_graph, IC_MAP)
         assert compute_fit_score(two, {}) == pytest.approx(compute_fit_score(one, {}))
+
+    def test_feature_value_controls_assignment(self, small_graph):
+        # Camptodactyly could take finger or hand; Broad thumb only hand. With a value
+        # function that prefers hand, camptodactyly takes hand and broad thumb is redundant.
+        profile = _profile("OMIM:1", [
+            _feat("HP:0001155", "Abnormality of the hand", ic=1.0),
+            _feat("HP:0001167", "Abnormality of finger", ic=2.0),
+        ])
+        prefer_hand = lambda f: 10.0 if f.hpo_id == "HP:0001155" else 0.0  # noqa: E731
+        fit = partition(_patient("HP:0001161", "HP:0011304"), profile, small_graph, IC_MAP,
+                        feature_value=prefer_hand)
+        assert {(fm.patient_term.id, fm.disease_feature.hpo_id) for fm in fit.matched} == {
+            ("HP:0001161", "HP:0001155")}
